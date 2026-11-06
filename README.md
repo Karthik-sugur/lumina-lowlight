@@ -75,16 +75,17 @@ Full diagram with function names: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 
 ## Run it
 
-**One command (Docker):**
-```bash
-docker build -t lumina . && docker run -p 7860:7860 lumina
-```
-**Or with Python 3.10+:**
+**With Python 3.10+ (tested):**
 ```bash
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt
 python app.py
 ```
+**Or with Docker:**
+```bash
+docker build -t lumina . && docker run -p 7860:7860 lumina
+```
+_(The Dockerfile was not built in our environment because Docker wasn't available; the Python route above is what we tested.)_
 Open http://localhost:7860. The trained weights (~0.7 MB) are in `weights/`, so no download is needed to run the app.
 
 ## Reproduce training and every number in the evaluation

@@ -82,4 +82,4 @@ flowchart LR
 
 ## Deployment
 
-`Dockerfile` (python:3.12-slim + CPU PyTorch) → Hugging Face Space (Docker SDK, 2 vCPU). The app has no state and no database, and stores nothing. Gradio's temporary files are purged hourly (`delete_cache`), and download files after an hour.
+Live app: Hugging Face Space using the **Gradio SDK on free ZeroGPU hardware** (Docker and CPU Spaces now require a paid plan). Inference runs on the Space's CPU; the GPU is never requested, which avoids GPU queueing and the daily quota. A `Dockerfile` (python:3.12-slim + CPU PyTorch) is included for self-hosting. The app has no state and no database, and stores nothing. Gradio's temporary files are purged hourly (`delete_cache`), and download files after an hour.
