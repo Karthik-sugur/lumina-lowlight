@@ -1,20 +1,23 @@
 # Demo script (3 minutes) and viva prep
 
 ## Before judging (5 minutes earlier)
-1. Open the live URL on **both** a laptop and a phone. Free Spaces sleep when idle, and the first load wakes them.
-2. Have a few **unseen** dark photos ready on the phone (take one in a dim corridor). Judges may bring their own.
-3. Keep `eval_P1_T76.md` and `results/figures/` open in another tab.
+1. Open **https://lumina-t76.vercel.app** on **both** a laptop and a phone. The status chip should read **Engine online · v3**. The free engine sleeps after 48 h idle, so a first request can take up to a minute; opening the page early wakes it.
+2. Keep the fallback ready: **https://darshuuuu-lumina-lowlight.hf.space** (classic interface, same engine).
+3. Have a few **unseen** dark photos on the phone (take one in a dim corridor). Judges may bring their own.
+4. Keep `eval_P1_T76.md` and `results/figures/` open in another tab.
 
-## 3-minute demo
+## 3-minute demo (LUMINA web app)
 
 | Time | Who | What to show / say |
 |---|---|---|
-| 0:00–0:20 | Darsh | "Night photos are dark, grainy and colour-shifted. Brightening alone amplifies noise and blows out lamps. Lumina restores them, and explains every decision." |
-| 0:20–1:00 | Darsh | **Enhance tab:** tap the **first example** (a near-black meeting room), then drag the before/after slider. The 5th (neon sign) shows that coloured lights are kept. Read the **Recoverability** badge and one line of *What we noticed* aloud. Switch to *Natural night mood* to show user control. |
-| 1:00–1:40 | Indhu | **Under the hood:** illumination map → Retinex gain ("dark corners get a lot of gain, lamps none, so no blow-outs") → noise-level map → removed noise ("it's grain, not edges"). |
-| 1:40–2:10 | Karthikeya | **Compare methods:** histogram equalisation (noisy, blown out) vs Zero-DCE++ vs ours. "Classical alone leaves noise, DL alone over-brightens, the hybrid gets the best of both." |
-| 2:10–2:40 | Dheeraj | **Benchmarks tab:** headline numbers (LOL-v2 real: best PSNR/SSIM/LPIPS/NIQE), the ablation chart ("removing the DL restorer costs the most"), one failure case. |
-| 2:40–3:00 | Any | **Judge's photo:** "Want to try one of yours?" Upload it from the phone camera. |
+| 0:00–0:20 | Darsh | Home page: "Night photos are dark, grainy and colour-shifted. Brightening alone amplifies noise and blows out lamps. LUMINA restores them, and explains every decision." |
+| 0:20–1:00 | Darsh | **Studio:** tap the **Meeting room** sample, press **Auto Enhance**, drag the before/after divider. Switch the mode between Classical, Deep Learning and Hybrid (instant). Open the **Analysis** tab: read the Recoverability chip and one line of *What we noticed*. In **Adjust → Engine settings**, pick *Natural night* and press Restore to show user control. |
+| 1:00–1:40 | Indhu | **Technology:** step through the stages: illumination map → reflectance and Retinex gain ("dark corners get a lot of gain, lamps none") → fusion weights → noise-level map → removed noise ("it's grain, not edges"). All are real outputs for this photo. |
+| 1:40–2:10 | Karthikeya | **Compare:** Original vs the three pipelines with synced zoom and per-method metrics. "Deep learning alone leaves grain; classical leaves noise and colour cast; the recommendation is computed per photo, and it is not always Hybrid." |
+| 2:10–2:40 | Dheeraj | **Benchmarks:** 18.41 dB / 0.781 SSIM on 215 unseen pairs, the Classical vs Deep vs Hybrid chart, the ablation table ("removing the DL restorer costs the most"), one failure case from the eval file. |
+| 2:40–3:00 | Any | **Judge's photo:** "Want to try one of yours?" In the Studio, tap the upload area on the phone and take a photo or pick one. |
+
+**Honest limitation to show if asked:** the *Near-black (hard)* sample comes out rated *Medium* with coloured grain, because compressed, spatially correlated noise is outside the restorer's training data (eval file §8, failure 5).
 
 ## Viva: likely questions and crisp answers
 

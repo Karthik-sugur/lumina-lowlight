@@ -132,7 +132,8 @@ Results, ablation and failure analysis: **[`eval_P1_T76.md`](../eval_P1_T76.md)*
 
 ## 7. Deployment and reproducibility
 - `docker build -t lumina . && docker run -p 7860:7860 lumina`, or `pip install -r requirements.txt torch && python app.py`.
-- Hosted on a Hugging Face Space (Gradio SDK, free ZeroGPU hardware, CPU inference). The Dockerfile is for self-hosting and was **not built in our environment** (no Docker available); the pip + `python app.py` route is the tested one.
+- Primary interface: the LUMINA web app (team's LUMORA v4 design) on Vercel, calling the engine's JSON API (`api.py`) cross-origin; details in [`FRONTEND.md`](FRONTEND.md).
+- Engine hosted on a Hugging Face Space (Gradio SDK, free ZeroGPU hardware, CPU inference), which also serves the classic Gradio interface as a fallback. The Dockerfile is for self-hosting and was **not built in our environment** (no Docker available); the pip + `python app.py` route is the tested one.
 - Reproduce everything: `python scripts/download_data.py && python scripts/train_dce.py && python scripts/train_restore.py && python scripts/train_restore.py --no-map && python scripts/evaluate.py && python scripts/report.py`. Seeds are fixed, and the split is saved in `results/split.json`.
 - Tests: `python -m pytest -q` (filter properties, gamma solver, every method and ablation, tiny/flat/extreme inputs).
 - No secrets anywhere: the app needs no API keys.

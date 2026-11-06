@@ -120,6 +120,7 @@ PSNR / SSIM / LPIPS / ΔE / EPI for ExDark: **n/a** (no ground truth). Colour ca
 | Restoration U-Net | 144,579 | 574.6 KB |
 
 - Laptop CPU above. The hybrid spends most of its time in the restoration U-Net and the Zero-DCE++ curve estimation (per-stage timings are shown live in the app's *Under the hood* tab).
+- **Primary web app (LUMINA on Vercel → engine on Hugging Face), measured in the browser on the production URL (2026-11-07, engine warm):** photo upload → all three pipelines → result shown in **2.15 s** on desktop (engine time 459 ms for all three) and **1.86 s** on a 375 px mobile profile. Details: `docs/FRONTEND.md`.
 - **Hosted app (Hugging Face, free ZeroGPU Space, CPU inference): measured on the live Space (2026-11-06, Space warm):
   - **Browser, click → finished result:** 1.59 s (desktop, 600×400 example), 1.32 s (mobile profile, 380×348 example).
   - **Server processing (reported by the app):** 0.4 s at 600×400 · 1.3 s at 1280×960 · 1.4 s for a 4000×3000 upload (downsized to 1280×960).

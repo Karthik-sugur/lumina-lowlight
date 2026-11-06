@@ -17,7 +17,7 @@ short_description: Adaptive hybrid (classical + DL) low-light image restoration
 
 > *See what the dark hid, without inventing what wasn't there.*
 
-**Live app:** https://darshuuuu-lumina-lowlight.hf.space  ·  **Code:** https://github.com/darshchandran/lumina-lowlight  ·  **Evaluation:** [`eval_P1_T76.md`](eval_P1_T76.md)  ·  **Design doc:** [`docs/DESIGN.md`](docs/DESIGN.md)  ·  **Architecture:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+**Live app:** https://lumina-t76.vercel.app  ·  **Engine (+ classic interface):** https://darshuuuu-lumina-lowlight.hf.space  ·  **Code:** https://github.com/darshchandran/lumina-lowlight  ·  **Evaluation:** [`eval_P1_T76.md`](eval_P1_T76.md)  ·  **Design doc:** [`docs/DESIGN.md`](docs/DESIGN.md)  ·  **Architecture:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 
 Lumina restores dark, noisy, colour-shifted photos with a **hybrid** of classical computer vision and two small neural networks. Every enhancement setting is chosen per image from measurements of that image, and the app explains in plain language what it noticed and what it did.
 
@@ -40,6 +40,19 @@ All test images are unseen (never used for training, validation or tuning). CPU 
 - **Honest weak spots:** not best on LOL-v2 synthetic (16.88 vs 18.04 dB for DL-only); the most new overexposure of our methods (1.08 % avg); noise-map conditioning is only a small, real-data-specific gain. Details in [`eval_P1_T76.md`](eval_P1_T76.md) §6–8.
 - **Two tiny networks:** 10.6k + 144.6k parameters (~0.6 MB); 0.8 s per 600×400 image and 1.9 s at 1280×960 on a laptop CPU.
 - Full evaluation, model selection, ablation and failure analysis: [`eval_P1_T76.md`](eval_P1_T76.md) (raw tables: [`results/tables.md`](results/tables.md)).
+
+## Architecture
+
+```
+Browser ──► Vercel: LUMINA web app (web/, the team's LUMORA v4 design, static HTML/CSS/JS)
+              │  HTTPS + CORS, image as data URL, JSON response (WebP images)
+              ▼
+            Hugging Face Space: Python engine (app.py + api.py)
+              POST /gradio_api/call/restore → classical + deep learning + hybrid (v3) in one call
+              the classic Gradio interface keeps running here as a fallback
+```
+
+Frontend integration details (endpoint audit, every control, security, limits, tests): [`docs/FRONTEND.md`](docs/FRONTEND.md).
 
 ## How it works
 
@@ -86,7 +99,13 @@ python app.py
 docker build -t lumina . && docker run -p 7860:7860 lumina
 ```
 _(The Dockerfile was not built in our environment because Docker wasn't available; the Python route above is what we tested.)_
-Open http://localhost:7860. The trained weights (~0.7 MB) are in `weights/`, so no download is needed to run the app.
+Open http://localhost:7860 for the engine and its classic interface. The trained weights (~0.7 MB) are in `weights/`, so no download is needed.
+
+**Web frontend (LUMINA) against the local engine:**
+```bash
+cd web && LUMINA_API_BASE=http://127.0.0.1:7860 node build.mjs && python -m http.server 8080 --directory dist
+```
+Open http://localhost:8080. Deployment to Vercel: [`docs/FRONTEND.md`](docs/FRONTEND.md).
 
 ## Reproduce training and every number in the evaluation
 
@@ -105,7 +124,9 @@ Everything runs on CPU, and seeds are fixed. The training logs we got are in `re
 ## Repository layout
 
 ```
-app.py                  Gradio app (UI, validation, explanations)
+web/                    LUMINA web frontend for Vercel (index.html, ui.js = teammate's UI, lumina.js = engine integration)
+api.py                  JSON API used by the web frontend (all three pipelines in one call)
+app.py                  Gradio app: classic interface + registers the API
 lowlight/classical.py   classical CV primitives
 lowlight/analysis.py    image diagnosis, adaptive parameters, plain-language explanations
 lowlight/dce.py         Zero-DCE++ model
@@ -117,7 +138,7 @@ weights/                trained weights (+ official Zero-DCE++ weights)
 results/                metrics, tables, figures, failure cases, training logs, split
 docs/                   design document, architecture, in-app "About"
 examples/               unseen test images used as demo examples (sources listed)
-tests/                  pytest suite
+tests/                  pytest suite (pipeline + API integration tests)
 ```
 
 ## Limitations and ethics (short version)

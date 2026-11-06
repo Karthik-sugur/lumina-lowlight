@@ -4,8 +4,10 @@ Every box below is a function in the code; file and function names are given so 
 
 ```mermaid
 flowchart TD
-    U([User: phone / laptop browser]) -->|upload / camera / example| APP["app.py — Gradio UI<br/>input validation, resize ≤1280 px,<br/>explanations, quality checks"]
-    APP --> RUN["pipeline.run(img, 'hybrid', preset, strength)"]
+    U([User: phone / laptop browser]) -->|LUMINA web app on Vercel<br/>web/index.html + ui.js + lumina.js| API["api.py restore()<br/>POST /gradio_api/call/restore<br/>validation, resize ≤1280 px"]
+    U -.->|classic interface / fallback| APP["app.py — Gradio UI"]
+    API --> RUN["pipeline.run(img, method, preset, strength)<br/>for classical, dl and hybrid"]
+    APP --> RUN
 
     subgraph S1["① Classical analysis (lowlight/classical.py, lowlight/analysis.py)"]
         T["estimate_illumination<br/>max-RGB prior + guided filter → T"]
@@ -46,7 +48,7 @@ flowchart TD
     CC --> RN
     HG --> NM
     RN --> UI["adjust_exposure (user intent)"]
-    UI --> OUT([Result + before/after slider + diagnosis +<br/>what-we-did + quality check + intermediate maps])
+    UI --> OUT(["api.py JSON: three outputs as WebP, diagnosis, explanations,<br/>no-reference checks, intermediate maps, timings, recommendation"])
 
     style S5 fill:#eef4fc,stroke:#2a78d6
     style S1 fill:#f4fbf7,stroke:#1baf7a
@@ -82,4 +84,4 @@ flowchart LR
 
 ## Deployment
 
-Live app: Hugging Face Space using the **Gradio SDK on free ZeroGPU hardware** (Docker and CPU Spaces now require a paid plan). Inference runs on the Space's CPU; the GPU is never requested, which avoids GPU queueing and the daily quota. A `Dockerfile` (python:3.12-slim + CPU PyTorch) is included for self-hosting. The app has no state and no database, and stores nothing. Gradio's temporary files are purged hourly (`delete_cache`), and download files after an hour.
+Primary interface: the **LUMINA web app on Vercel** (static, `web/`, built by `web/build.mjs` with the engine URL from `LUMINA_API_BASE`), calling the engine API cross-origin. Engine: Hugging Face Space using the **Gradio SDK on free ZeroGPU hardware** (Docker and CPU Spaces now require a paid plan). Inference runs on the Space's CPU; the GPU is never requested, which avoids GPU queueing and the daily quota. A `Dockerfile` (python:3.12-slim + CPU PyTorch) is included for self-hosting. The app has no state and no database, and stores nothing. Gradio's temporary files are purged hourly (`delete_cache`), and download files after an hour.

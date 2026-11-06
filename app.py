@@ -11,6 +11,8 @@ import cv2
 import gradio as gr
 import numpy as np
 
+import api
+from api import VIZ_HELP, heat
 from lowlight import analysis as A
 from lowlight import classical as C
 from lowlight import metrics as M
@@ -33,25 +35,6 @@ MIN_SIDE = 32
 OUT_DIR = Path(tempfile.gettempdir()) / "lumina"
 OUT_DIR.mkdir(exist_ok=True)
 EXAMPLES = sorted(str(p) for p in (ROOT / "examples").glob("*.jpg"))
-
-VIZ_HELP = {
-    "Illumination map T": "How much light reached each area (bright = well lit). Max of R,G,B, smoothed by an edge-aware guided filter.",
-    "Reflectance R = I / T": "The scene's own colours and textures with the lighting divided out (Retinex). Grainy where it was dark - hence the restoration step.",
-    "Retinex gain T^(gamma-1)": "How strongly each area is brightened: dark corners get a lot, lamps and lit areas almost none, so nothing blows out.",
-    "Curve strength |A|": "The deep model's per-pixel tone-curve strength (Zero-DCE++). Curves can only re-tone pixels, never invent content.",
-    "Classical candidate (Retinex)": "Candidate 1: classical Retinex re-lighting.",
-    "DL candidate (Zero-DCE++)": "Candidate 2: fine-tuned deep curve estimation, exposure picked by the quality check.",
-    "Fusion weight (DL share)": "Where the result trusts the deep model (bright) vs Retinex (dark), chosen per pixel from exposure + detail quality.",
-    "Noise-level map (to DL)": "Where brightening amplified sensor noise the most. Handed to the restoration network so it knows where to clean hard.",
-    "Removed noise / corrections (x4)": "What the restoration network changed, magnified 4x. Should look like grain, not like object edges.",
-    "Noise-removal strength": "Edge-preserving denoising strength: strongest where shadows were lifted most.",
-}
-
-
-def heat(m):
-    """Colour-blind-safe (cividis) heatmap for single-channel maps."""
-    return cv2.cvtColor(cv2.applyColorMap(C.to_u8(np.clip(m, 0, 1)), cv2.COLORMAP_CIVIDIS), cv2.COLOR_BGR2RGB)
-
 
 def load_input(img):
     """Validate and normalise whatever the browser sent; friendly errors for bad input."""
@@ -217,6 +200,8 @@ with gr.Blocks(title="Lumina - low-light restoration", delete_cache=(1800, 3600)
     btn.click(enhance, [inp, preset, strength], outs)
     inp.upload(enhance, [inp, preset, strength], outs)
     cmp_btn.click(compare, [inp, preset, strength], [cmp_gallery, cmp_table])
+    # JSON API for the Vercel-hosted web UI (web/): POST /gradio_api/call/restore
+    gr.api(api.restore, api_name="restore", time_limit=120)
 
 if __name__ == "__main__":
     demo.queue(default_concurrency_limit=2).launch(
