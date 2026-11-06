@@ -1,10 +1,11 @@
 ## How Lumina works (30-second version)
 
-1. **Understand the photo.** We estimate how light fell on the scene (an *illumination map*) and measure darkness, sensor noise, uneven lighting, colour cast and coloured light sources.
+1. **Understand the photo.** We estimate how light fell on the scene (an *illumination map*) and measure darkness, sensor noise, uneven lighting, sharpness, colour cast and saturation, coloured light sources and JPEG compression blocks.
 2. **Choose settings for *this* photo.** Every strength (brightening, contrast, white balance, noise removal) is derived from those measurements; nothing is a fixed number.
 3. **Brighten two ways, keep the best of each.** Classical *Retinex* re-lighting and a fine-tuned deep curve model (*Zero-DCE++*) each produce a candidate. A per-pixel quality score (good exposure plus real detail) blends them.
-4. **Restore.** A small restoration network removes the noise that brightening uncovered. It is told *where* noise was amplified most, using a map computed from the illumination estimate.
-5. **Respect your intent.** *Natural night mood* keeps a photo feeling like night; *Maximum visibility* reveals the most. The brightness slider fine-tunes either.
+4. **Restore.** A small restoration network removes the noise that brightening uncovered. It is told *where* noise was amplified most, using a map computed from the illumination estimate. Compressed photos are cleaned *before* brightening, so their blocks and colour noise are not amplified.
+5. **Recover detail, honestly.** After noise removal, detail is put back only where it is stronger than the measured noise, with a guard against halos; already-sharp or very noisy photos are left alone. Large photos keep their size (up to 2048 px): the fine detail comes from your own photo, never invented.
+6. **Respect your intent.** *Natural night mood* keeps a photo feeling like night; *Maximum visibility* reveals the most. The brightness slider fine-tunes either.
 
 ## Designed for people, not just metrics
 

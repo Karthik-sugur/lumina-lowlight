@@ -32,7 +32,7 @@ Photos taken in the dark are underexposed, noisy and colour-shifted. Naive brigh
 
 **Design principles:** explain, don't just output · honest uncertainty (recoverability rating, blown-out / residual-grain warnings) · user agency (intent presets, brightness slider; *Auto* recommended, never forced) · privacy by default (in-memory processing, temp files purged within an hour, nothing logged) · accessibility (mobile layout, large targets, text alternatives for every visual, cividis colour maps).
 
-**Interface states:** empty (prompt plus examples) · loading (Gradio progress on every output) · success (slider, summary, diagnosis, actions, quality table) · warning (inline ⚠️ lines) · error (friendly `gr.Error` messages for: no image, non-image, < 32 px, processing failure; never a stack trace). Images over 1280 px are downscaled with a visible note.
+**Interface states:** empty (prompt plus examples) · loading (Gradio progress on every output) · success (slider, summary, diagnosis, actions, quality table) · warning (inline ⚠️ lines) · error (friendly `gr.Error` messages for: no image, non-image, < 32 px, processing failure; never a stack trace). Photos keep their size up to 2048 px (enhanced at ≤ 1280 px, then returned full size with detail transfer, §5.6); anything resized is stated with both sizes.
 
 ## 3. Requirements traceability
 
@@ -47,14 +47,14 @@ Photos taken in the dark are underexposed, noisy and colour-shifted. Naive brigh
 | **B. Implement / adapt a low-light architecture** | `dce.py`: Zero-DCE++ re-implemented, official weights loaded | baseline "Zero-DCE++ official" |
 | **B. Fine-tune where data is available** | `scripts/train_dce.py` (LOL train split, supervised L1+SSIM + zero-reference regularisers); `scripts/train_restore.py` | `results/train_log_*.json`, figure 4 |
 | **B. Generalisation across illumination conditions** | LOL-v2 real + synthetic + ExDark (unseen), synthetic exposure sweep ×0.5 … ×0.025 + spotlight | eval file §Robustness, figure 2 |
-| **B. Image-quality-aware enhancement** | `pipeline.choose_dce_scale` (quality search over curve strength); quality-weighted fusion; noise-map-conditioned restoration | ablation "w/o quality-aware curve scaling" |
+| **B. Image-quality-aware enhancement** | `analysis.diagnose` (illumination, noise, sharpness, edges, colourfulness, JPEG blockiness, resolution) → `analysis.choose_params` / `detail_strengths` / `strategy`; `pipeline.choose_dce_scale`; quality-weighted fusion; noise-map-conditioned restoration; adaptive detail recovery (`classical.recover_detail`); full-size detail transfer (`pipeline.run_full`) | ablations "w/o quality-aware curve scaling", "w/o detail recovery", "w/o quality-aware strategy", "previous pipeline"; before/after table in the eval file |
 | **C. Integrate classical illumination with DL restoration** | `pipeline.noise_map` (from illumination/gain) → `restore.RestoreNet` conditioning input | ablation "w/o noise-map conditioning" (separately trained net) |
 | **C. Adaptive select / combine outputs** | `pipeline.fusion_weights` + `pyramid_blend` | ablations "w/o Retinex branch", "w/o Zero-DCE++ branch"; fusion weight map |
 | **C. Preserve edges and textures, minimise noise amplification** | gain cap, amplification-aware fusion, guided-filter T (no halos), restoration with noise map | EPI and residual-noise columns |
 | **C. Extremely dark and non-uniform inputs** | exposure sweep down to ×0.025; spotlight condition; adaptive target for high lighting spread | figure 2 |
 | **Adv 1. Adaptive strategy** | §5.4 | ablation (fixed parameters) |
 | **Adv 2. Compare classical / DL / hybrid** | `pipeline.METHODS` (+ 3 baselines) | eval file §1, *Compare methods* tab |
-| **Adv 3. Ablation** | `pipeline.ABLATIONS` (9 removals) | eval file §2, figure 3 |
+| **Adv 3. Ablation** | `pipeline.ABLATIONS` (12 removals) | eval file §6, figure 3 |
 | **Adv 4. Overexposure, colour shift, detail loss** | `protect_highlights`, gain cap, coloured-light-aware WB; measured by new-overexposure %, ΔE2000, EPI | eval file columns |
 | **Adv 5. Unseen images** | All test sets disjoint from training/tuning; app examples from test sets | eval file |
 | Metrics: PSNR, SSIM, LPIPS, NIQE, latency, noise and edges | `lowlight/metrics.py`, `scripts/evaluate.py` | eval file |
@@ -66,11 +66,11 @@ Photos taken in the dark are underexposed, noisy and colour-shifted. Naive brigh
 |---|---|---|
 | LOL-v1 `our485` | **train 435 / validation 50**, seeded split (`results/split.json`) | 485 pairs, 600×400 |
 | LOL-v1 `eval15` | test (paired) | 15 |
-| LOL-v2 real `Test` | test, unseen capture conditions (paired) | 100 |
+| LOL-v2 real `Test` | test, **clean subset only** (paired) | 9 of 100 (see below) |
 | LOL-v2 synthetic `Test` | test, synthetic darkening of RAISE photos (paired) | 100 |
 | ExDark (384 px release) | test, real-world night photos, **no reference** (letterbox trimmed) | 60 sampled (seed 0) |
 
-There is no leakage: the test sets are never read by `train_dce.py`, `train_restore.py`, or when choosing any constant. Checkpoint selection uses only the 50-image validation split.
+**Leakage found and fixed (2026-11-07).** LOL-v2 real re-packages LOL-v1: a pixel-hash check showed that 86 of its 100 test *inputs* and 91 of its 100 *references* are identical to LOL-v1 `our485` images, which are our training/validation data. Our earlier LOL-v2-real numbers (and the robustness sweep, built from those references) were therefore partly measured on training images. `scripts/evaluate.py` now hashes every `our485` image and keeps only LOL-v2 real pairs whose input **and** reference are absent (9 pairs, 3 scenes); the robustness sweep now uses LOL-v2 *synthetic* references, and the ablation runs on eval15 + LOL-v2 synthetic. eval15, LOL-v2 synthetic and ExDark share no image with `our485`. The test sets are never read by `train_dce.py`, `train_restore.py`, or when choosing any constant; checkpoint selection and every constant of the quality-aware update were decided on the 50-image validation split (and a compressed version of it, §5.6).
 
 ## 5. Method
 
@@ -109,7 +109,36 @@ There is no leakage: the test sets are never read by `train_dce.py`, `train_rest
 | Detail β (classical) | interp(expected noise 3→25, 1.15→0.85) | sharpen clean images only |
 | Denoise strength | 90th percentile of the noise map | measured, not guessed |
 
-### 5.5 Alternatives tried and rejected
+### 5.6 Image-quality-aware adaptive enhancement (added 2026-11-07)
+
+Two user photos exposed what a brightness-only strategy misses: a small, compressed flower photo came out **pixelated and oversaturated**, and a large, clean living-room photo came out **soft**. Diagnosis (measured, not guessed):
+- *Flower:* Retinex divides by max(R,G,B), so in near-black pixels the chroma *noise* becomes saturated colour (input chroma 4.7 → 36.7); the darkness-based saturation boost (×1.13) and CLAHE added more; and an 11–21× gain on a 300-px JPEG turned invisible 8×8 blocks into visible ones.
+- *Living room:* the restoration U-Net removes fine texture along with noise (sharpness index 0.050 → 0.021) and nothing put it back; and the engine returned 1280 px for a 3872 px photo, which the browser then upscaled.
+
+The pipeline now measures image quality first and picks operations from it (`analysis.strategy`, shown to the user as the *Enhancement breakdown*):
+
+| Measured | How | Decides |
+|---|---|---|
+| Illumination level + non-uniformity | mean luma, p90−p10 of log₂ T | target, gain |
+| Noise | Immerkær σ on the input and **after brightening** (noise map); residual σ after restoration | pre-denoise, restoration conditioning, sharpening strength |
+| Sharpness / blur | exposure-normalised Laplacian energy (σ-1 pre-blur so grain counts little), measured **after** noise removal | detail-recovery strength (none if already sharp) |
+| Edge strength | p90 gradient of normalised luma | reported |
+| Colour | Lab chroma ÷ lightness (colourfulness), mean-colour cast | saturation ceiling, white balance |
+| Compression | 8×8 grid step energy vs elsewhere, best of 8 offsets (blockiness) | boundary deblocking, gentler CLAHE, no fine sharpening |
+| Resolution / recoverable detail | size; recoverability rating | gain cap (14× instead of 25× when < 400 px or blocky), detail trust |
+
+New operations, all gated by those measurements:
+1. **Denoise before brightening** (`classical.pre_denoise`): luma-guided chroma smoothing, plus JPEG deblocking of luma **only at the 8×8 block boundaries** (the grid offset is detected), so in-block texture survives. In the hybrid this runs only for blocky JPEGs: on validation, pre-denoising clean-but-noisy PNGs before the restoration network lowered SSIM (0.824 → 0.812), because the network was trained on raw sensor noise.
+2. **Saturation ceiling** (`classical.limit_saturation`): chroma is scaled down (hue kept) only if mid-tone colourfulness exceeds 0.55 (LOL references: p90 0.39), so normal scenes are untouched.
+3. **Adaptive detail recovery after noise removal** (`classical.recover_detail`): (a) detail the restorer removed is re-injected only where it exceeds the *local* noise of the pre-restoration image (coring at 2.5σ of the noise map, so grain never comes back); (b) two-scale edge-aware unsharp masking (guided-filter base, radius 2 and 6) cored at the residual noise; (c) a halo clamp (3×3 local min/max ± 0.04). Strengths fall with residual noise, already-high sharpness, low recoverability, and fine sharpening is off for blocky JPEGs.
+4. **Resolution preservation** (`pipeline.run_full`): photos are enhanced at ≤ 1280 px (CPU budget) and returned at their own size (≤ 2048 px; larger photos are reduced first and the UI says so). The missing fine band is taken from the photo itself: (input − its own low-pass) × local brightening gain, cored at a robust per-tile noise estimate, and used only in tiles where the band is heavy-tailed like real structure (RMS/robust σ ≥ 1.3–1.8) rather than Gaussian-like noise. Nothing is invented: every added detail is in the input and above its noise.
+5. **Auto mode** chooses Classical, DL or Hybrid per photo from no-reference checks (exposure, residual noise, clipping, colour cast + oversaturation, detail, blockiness), with the formula shown in the app.
+
+Cases A–E from the brief map to: extremely dark → gain cap + strong restoration, little sharpening (noise-limited); brightened but blurry → detail recovery at full strength (clean, soft); dark and noisy → denoise first, sharpening scaled down by residual noise; uneven illumination → Retinex per-pixel gain + target reduction for high lighting spread; already well lit → minimal gain, sharpening off if sharp.
+
+Validation evidence (never the test sets): our485 validation split (50 pairs) and a compressed proxy of it (384 px, JPEG q70, standing in for small real-world JPEGs). Key decisions: re-injection must be cored at the reference's own noise (otherwise it re-injected grain); deblocking must be boundary-only (full-image deblocking removed blocks but erased texture: detail 0.69× the reference, LPIPS 0.270 → 0.310); CLAHE stays at 40 % on deblocked JPEGs (full CLAHE: −0.8 dB); full-size transfer must be structure-gated (ungated, it added noise speckle on smooth surfaces).
+
+### 5.7 Alternatives tried and rejected
 - **Illumination-guided Zero-DCE++** (T as a 4th input channel, zero-initialised): after 4 epochs it was indistinguishable from plain Zero-DCE++ (same validation PSNR to 0.01 dB, 4th-channel weights ≈ 0.003). A curve-only network cannot denoise, and noise was the bottleneck, so the integration effort moved to the noise-map-conditioned restoration stage.
 - **Uncapped Retinex gain:** produced coloured "confetti" in near-black JPEG regions (160× gain). Replaced by the 25× cap plus the amplification-aware fusion.
 - **Input-domain noise estimate for the map:** under-estimates noise in 8-bit/JPEG dark images (e.g. σ = 0.6 on a visibly grainy ExDark photo). Replaced by measuring on the brightened image.
@@ -120,13 +149,14 @@ There is no leakage: the test sets are never read by `train_dce.py`, `train_rest
 ## 6. Evaluation methodology
 - **Paired sets:** PSNR, SSIM (Gaussian 11×11, σ=1.5, RGB), LPIPS (AlexNet, pyiqa), NIQE (pyiqa), residual noise σ (Immerkær), edge preservation index (Laplacian correlation with ground truth), CIEDE2000 colour shift, newly over-exposed pixel %, brightness error.
 - **Unpaired (ExDark):** NIQE, residual noise, clipping, colour cast, brightness.
-- **Robustness:** 30 unseen LOL-v2-real references degraded physically (linear light × k, Poisson shot noise at 800 e⁻ full-well, Gaussian read noise 0.002, sRGB re-encode, 8-bit) at k ∈ {0.5, 0.25, 0.1, 0.05, 0.025} plus a strongly non-uniform spotlight.
-- **Latency:** sequential single process, after warm-up, mean of 6 LOL images (600×400) and 3 runs at 1280×960, laptop CPU (no GPU).
-- **Ablation:** hybrid with one component removed, on LOL-v1 eval15 + LOL-v2 real.
+- **Robustness:** 30 unseen LOL-v2-synthetic references degraded physically (linear light × k, Poisson shot noise at 800 e⁻ full-well, Gaussian read noise 0.002, sRGB re-encode, 8-bit) at k ∈ {0.5, 0.25, 0.1, 0.05, 0.025} plus a strongly non-uniform spotlight.
+- **Latency:** sequential single process, after warm-up, mean of 6 LOL images (600×400), 3 runs at 1280×960 and 2 runs of a 2048×1536 upload returned at full size, laptop CPU (no GPU).
+- **Ablation:** hybrid with one component removed, on LOL-v1 eval15 + LOL-v2 synthetic (the clean LOL-v2 real subset is too small for stable differences); the before/after comparison of the quality-aware update also runs on ExDark.
+- **Auto mode:** the per-image recommendation, scored with the ground truth it never sees, against always-hybrid and an oracle.
 
-Results, ablation and failure analysis: **[`eval_P1_T76.md`](../eval_P1_T76.md)**. Headline (test sets, hybrid): 18.41 dB / 0.781 SSIM / 0.227 LPIPS / 4.16 NIQE averaged over 215 unseen pairs (best of six methods on 7 of 8 metrics); best NIQE on ExDark; best from ×0.25 to ×0.025 exposure.
+Results, ablation and failure analysis: **[`eval_P1_T76.md`](../eval_P1_T76.md)**. Headline (clean test sets, hybrid): 17.86 dB / 0.768 SSIM / 0.264 LPIPS / 4.29 NIQE averaged over 124 unseen pairs (best of six methods on 7 of 8 metrics); lowest residual noise on ExDark; best at every exposure of the darkness sweep. The quality-aware update costs 0.27 dB (eval15) and 0.76 dB (clean LOL-v2 real) through its saturation ceiling, which is applied before denoising (eval file §9.5); reported, not re-tuned on test data.
 
-**Model selection (validation only).** Restorer v2 (LOL pairs only) vs v3 (LOL + synthetic pairs), full pipeline, 50 held-out real pairs + their synthetic degradations: v2 19.65 / 17.54 dB (real / synthetic), v3 19.41 / 19.90 dB. **v3 selected**: −0.24 dB on real, +2.36 dB on synthetic, real/synthetic gap 0.49 vs 2.11 dB. On the test sets (seen only afterwards) v3 gained on LOL-v1 (+0.62 dB) and extreme darkness, but lost 0.94 dB on LOL-v2 real; reported, not re-selected.
+**Model selection (validation only).** Restorer v2 (LOL pairs only) vs v3 (LOL + synthetic pairs), full pipeline, 50 held-out real pairs + their synthetic degradations: v2 19.65 / 17.54 dB (real / synthetic), v3 19.41 / 19.90 dB. **v3 selected**: −0.24 dB on real, +2.36 dB on synthetic, real/synthetic gap 0.49 vs 2.11 dB. On the test sets (seen only afterwards) v3 gained on LOL-v1 (+0.62 dB) and extreme darkness; its LOL-v2 real comparison was on the contaminated 100-pair set and is withdrawn.
 
 **Noise-map conditioning, honestly:** it helps on real captures (+0.25 dB v2, +0.20 dB v3 on validation), hurts on synthetic noise (−1.48 / −0.21 dB), and is a tie overall for v3 (19.65 vs 19.66). It is a small, real-data-specific benefit.
 
@@ -139,7 +169,7 @@ Results, ablation and failure analysis: **[`eval_P1_T76.md`](../eval_P1_T76.md)*
 - No secrets anywhere: the app needs no API keys.
 
 ## 8. Limitations
-See also *About* in the app. In short: (1) no method recovers detail below the noise floor, and near-black regions stay soft; (2) coloured lighting vs colour cast is ambiguous; (3) already-clipped highlights can't be recovered; (4) the restorer was trained on LOL (indoor, one sensor family) plus synthetic sensor noise; compressed/correlated noise (video frames, heavy JPEG) is outside its training distribution; (5) heavy JPEG blocking is amplified; (6) PSNR and SSIM reward matching a dataset's exposure convention (our three worst LOL-v2 cases gain ~9 dB from one global brightness gain), which isn't necessarily what a user wants (hence presets); (7) highlight protection runs before the restorer, which can re-clip highlights; the ablation shows it has no measurable effect, so overexposure (1.08 % new clipped pixels on average) is our weakest metric.
+See also *About* in the app. In short: (1) no method recovers detail below the noise floor, and near-black regions stay soft; (2) coloured lighting vs colour cast is ambiguous; (3) already-clipped highlights can't be recovered; (4) the restorer was trained on LOL (indoor, one sensor family) plus synthetic sensor noise; compressed/correlated noise (video frames, heavy JPEG) is outside its training distribution; (5) heavy JPEG blocking is amplified; (6) PSNR and SSIM reward matching a dataset's exposure convention (our three worst LOL-v2 cases gain ~9 dB from one global brightness gain), which isn't necessarily what a user wants (hence presets); (7) highlight protection runs before the restorer, which can re-clip highlights; the ablation shows it has no measurable effect, so overexposure (1.08 % new clipped pixels on average) is our weakest metric; (8) the saturation ceiling is measured before denoising, so chroma noise can trigger it and dull true colours (−0.27 / −0.76 dB on eval15 / clean LOL-v2 real); (9) per-photo Auto selection from no-reference checks does not beat always-hybrid on validation, so Auto keeps the hybrid unless another output is clearly better; (10) detail lost below the noise floor is not recovered (by design: nothing is invented).
 
 ## 9. Ethics and responsible use
 - **No hallucination by design:** brightening is pixel-wise and monotone; restoration is a residual correction conditioned on measured noise, with no generative prior.
@@ -157,4 +187,4 @@ See also *About* in the app. In short: (1) no method recovers detail below the n
 | Darsh Chandran | 1RUA24CSE0115 | App/UX, deployment, documentation |
 
 ## 11. Future work
-Fine-tune the restorer on more diverse real data (e.g. SID sRGB, phone captures); a learned recoverability/uncertainty map; tiled processing for full-resolution phone images; on-device (ONNX/TFLite) export. Together the two networks are about 155k parameters, which makes on-device use realistic.
+Fine-tune the restorer on more diverse real data (e.g. SID sRGB, phone captures, compressed video frames) so detail survives restoration in the first place; a learned recoverability/uncertainty map; tiled processing beyond 2048 px; on-device (ONNX/TFLite) export. Together the two networks are about 155k parameters, which makes on-device use realistic.

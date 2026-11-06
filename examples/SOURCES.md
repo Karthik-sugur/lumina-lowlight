@@ -1,6 +1,6 @@
 # Example images
 
-All examples come from **test** data never used for training or tuning. ExDark letterbox borders were trimmed. Images remain under their datasets' research licences.
+All examples come from **test** data never used for training or tuning (the LOL-v2 ones were checked pixel-by-pixel against LOL-v1 our485, which LOL-v2 real largely duplicates). ExDark letterbox borders were trimmed. Images remain under their datasets' research licences.
 
 | File | Dataset | Original path | Size |
 |---|---|---|---|
@@ -11,4 +11,4 @@ All examples come from **test** data never used for training or tuning. ExDark l
 | 05_exdark_neon_sign_coloured_lights.jpg | ExDark | ExDark/Motorbike/2015_05802.jpg | 258x384 |
 | 04_exdark_dark_road_lamps.jpg | ExDark | ExDark/Bus/2015_02287.jpg | 384x290 |
 | 01_lolv2_indoor_1.jpg | LOL-v2 real (test split) | Test/Input/00706.png | 600x400 |
-| 02_lolv2_indoor_2.jpg | LOL-v2 real (test split) | Test/Input/00748.png | 600x400 |
+| 02_lolv2_stadium_seats.jpg | LOL-v2 real (test split) | Test/Input/00767.png | 600x400 |

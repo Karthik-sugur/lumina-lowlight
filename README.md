@@ -25,20 +25,21 @@ Lumina restores dark, noisy, colour-shifted photos with a **hybrid** of classica
 
 ## Highlights
 
-All test images are unseen (never used for training, validation or tuning). CPU only.
+All test images are unseen (never used for training, validation or tuning). LOL-v2 real is restricted to the 9 pairs that are **not** pixel-identical to LOL-v1 training images (86 of its 100 inputs are; see the correction in [`eval_P1_T76.md`](eval_P1_T76.md)). CPU only.
 
-| Average over 3 paired test sets (215 pairs) | PSNR ↑ | SSIM ↑ | LPIPS ↓ | NIQE ↓ | Residual noise σ ↓ | ΔE2000 ↓ |
+| Average over 3 paired test sets (124 pairs, sets weighted equally) | PSNR ↑ | SSIM ↑ | LPIPS ↓ | NIQE ↓ | Residual noise σ ↓ | ΔE2000 ↓ |
 |---|---|---|---|---|---|---|
-| Zero-DCE++ (official weights) | 17.13 | 0.654 | 0.281 | 6.84 | 5.07 | 16.33 |
-| Classical only (ours) | 16.91 | 0.631 | 0.413 | 6.39 | 5.22 | 15.00 |
-| Deep learning only (ours) | 18.04 | 0.642 | 0.287 | 6.95 | 6.43 | 13.98 |
-| **Hybrid (ours)** | **18.41** | **0.781** | **0.227** | **4.16** | **1.55** | **12.31** |
+| Zero-DCE++ (official weights) | 16.16 | 0.595 | 0.337 | 7.41 | 5.06 | 18.06 |
+| Classical only (ours) | 16.76 | 0.621 | 0.467 | 6.87 | 5.36 | 16.49 |
+| Deep learning only (ours) | 17.65 | 0.589 | 0.349 | 7.58 | 6.62 | 15.22 |
+| **Hybrid (ours)** | **17.86** | **0.768** | **0.264** | **4.29** | **1.27** | **13.48** |
 
-- **LOL-v1 eval15 / LOL-v2 real:** hybrid 19.18 / 19.17 dB PSNR, SSIM 0.779 / 0.800, LPIPS 0.206 / 0.223; best of all methods on both sets except new-overexposure.
-- **Darkness sweep:** best method from ×0.25 down to ×0.025 exposure (23.09 dB at ×0.025, vs 19.75 for classical-only).
-- **ExDark real-world night photos (no ground truth):** best NIQE (4.18) and lowest residual noise (2.10).
-- **Honest weak spots:** not best on LOL-v2 synthetic (16.88 vs 18.04 dB for DL-only); the most new overexposure of our methods (1.08 % avg); noise-map conditioning is only a small, real-data-specific gain. Details in [`eval_P1_T76.md`](eval_P1_T76.md) §6–8.
-- **Two tiny networks:** 10.6k + 144.6k parameters (~0.6 MB); 0.8 s per 600×400 image and 1.9 s at 1280×960 on a laptop CPU.
+- **LOL-v1 eval15 / clean LOL-v2 real:** hybrid 18.91 / 17.91 dB PSNR, SSIM 0.775 / 0.770, LPIPS 0.226 / 0.307; best of all methods on both sets except new-overexposure.
+- **Darkness sweep (30 unseen references):** best method at every exposure from ×0.5 to ×0.025, by 1.0–2.4 dB.
+- **ExDark real-world night photos (no ground truth):** lowest residual noise (1.68); the official Zero-DCE++ has the best NIQE (4.29 vs 4.60).
+- **Image-quality-aware update:** measures noise, sharpness, colourfulness, JPEG blocking and resolution and adapts to them; fixes oversaturated, blocky small JPEGs (flower photo: blocks 2.03 → 1.31, colourfulness 0.63 → 0.37) and returns full-size results with real (not invented) detail. **But** its saturation ceiling costs 0.27 dB on eval15 and 0.76 dB on clean LOL-v2 real; reported, not re-tuned on test data ([`eval_P1_T76.md`](eval_P1_T76.md) §9).
+- **Honest weak spots:** not best on LOL-v2 synthetic (16.75 vs 18.04 dB for DL-only); the most new overexposure of our methods (1.08 % avg); Auto mode cannot beat "always hybrid" on validation, so it keeps the hybrid unless another output is clearly better. Details in [`eval_P1_T76.md`](eval_P1_T76.md) §6–9.
+- **Two tiny networks:** 10.6k + 144.6k parameters (~0.6 MB); 0.8 s per 600×400 image, 2.4 s at 1280×960, 2.7 s for a 2048-px photo returned full size, on a laptop CPU.
 - Full evaluation, model selection, ablation and failure analysis: [`eval_P1_T76.md`](eval_P1_T76.md) (raw tables: [`results/tables.md`](results/tables.md)).
 
 ## Architecture
@@ -57,13 +58,16 @@ Frontend integration details (endpoint audit, every control, security, limits, t
 ## How it works
 
 ```
-photo ─► ① illumination map T (max-RGB + guided filter) + diagnosis (brightness, noise, lighting spread, colour cast)
-        ─► adaptive parameters (no fixed strengths)
+photo ─► ① illumination map T (max-RGB + guided filter) + quality diagnosis (brightness, lighting spread, noise,
+           sharpness, edges, colourfulness / cast, JPEG blockiness, resolution) ─► adaptive parameters + strategy
+        ─► (blocky JPEG / noisy classical path) denoise + boundary deblock BEFORE brightening, lower gain cap
         ─► ② two candidates: Retinex re-lighting (classical) │ Zero-DCE++ fine-tuned (DL, quality-aware curve strength)
         ─► ③ per-pixel quality-weighted Laplacian-pyramid fusion + soft highlight roll-off
-        ─► ④ adaptive CLAHE + colour correction
+        ─► ④ adaptive CLAHE + colour correction with a natural saturation ceiling
         ─► ⑤ restoration U-Net conditioned on a noise-level map derived from the illumination model
-        ─► your intent (Natural / Auto / Max visibility + brightness slider)
+        ─► ⑥ adaptive detail recovery AFTER denoising (above-noise detail only, halo clamp; off when sharp or noisy)
+        ─► ⑦ full-size output: enhanced at ≤1280 px, returned at the photo's size (≤2048 px) with its own detail
+        ─► your intent (Natural / Auto / Max visibility + brightness slider); Auto also picks the method per photo
 ```
 
 Full diagram with function names: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
@@ -75,7 +79,7 @@ Full diagram with function names: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 | Adaptive parameter selection | `lowlight/analysis.py`: `diagnose` → `choose_params` |
 | Deep model (Zero-DCE++), fine-tuned | `lowlight/dce.py`, `scripts/train_dce.py` |
 | DL restoration conditioned on classical illumination | `lowlight/restore.py`, `scripts/train_restore.py`, `pipeline.noise_map` |
-| Adaptive selection / fusion, quality-aware strategy | `pipeline.fusion_weights`, `pyramid_blend`, `choose_dce_scale` |
+| Adaptive selection / fusion, quality-aware strategy | `pipeline.fusion_weights`, `pyramid_blend`, `choose_dce_scale`; `analysis.strategy`, `detail_strengths`, `quality_labels`; `classical.pre_denoise`, `recover_detail`, `limit_saturation`; `pipeline.run_full`; `api.recommend` (Auto mode) |
 | Classical vs DL vs hybrid, ablation, robustness, failures | `scripts/evaluate.py`, `scripts/report.py` → [`eval_P1_T76.md`](eval_P1_T76.md) |
 
 ## Human-centred design

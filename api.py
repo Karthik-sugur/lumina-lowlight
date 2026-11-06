@@ -25,7 +25,8 @@ from lowlight import classical as C
 from lowlight import metrics as M
 from lowlight import pipeline as P
 
-MAX_SIDE = int(os.environ.get("MAX_SIDE", 1280))  # processing resolution cap (speed on 2 vCPUs)
+MAX_SIDE = int(os.environ.get("MAX_SIDE", 1280))  # the pipeline itself runs at <= this (speed on 2 vCPUs)
+OUTPUT_MAX = int(os.environ.get("OUTPUT_MAX", 2048))  # results keep the upload's size up to this (full-size detail transfer)
 MIN_SIDE = 32
 MAX_BYTES = 15 * 2 ** 20  # decoded upload limit; the web UI downsizes photos before sending
 # Optional origin allow-list, e.g. "https://lumina-t76.vercel.app,https://*-darshchandran.vercel.app".
@@ -34,7 +35,10 @@ ALLOWED_ORIGINS = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "").spli
 
 METHODS = {"classical": "Classical CV", "dl": "Deep learning", "hybrid": "Hybrid"}
 # Transparent recommendation: lower penalty is better. Weights are a stated design choice, not learned.
-WEIGHTS = {"exposure": 0.35, "noise": 0.35, "clipping": 0.2, "colour": 0.1}
+WEIGHTS = {"exposure": 0.3, "noise": 0.3, "clipping": 0.15, "colour": 0.1, "detail": 0.1, "artefacts": 0.05}
+# Hybrid stays the pick unless another output's penalty is lower by more than this. Validation (our485 val
+# + a compressed 384-px proxy): switching at margin 0 cost 0.3 dB / 1.5 dB vs always-hybrid; 0.3 costs 0 / 0.17 dB.
+HYBRID_MARGIN = 0.3
 
 VIZ_HELP = {
     "Illumination map T": "How much light reached each area (bright = well lit). Max of R,G,B, smoothed by an edge-aware guided filter.",
@@ -47,6 +51,7 @@ VIZ_HELP = {
     "Noise-level map (to DL)": "Where brightening amplified sensor noise the most. Handed to the restoration network so it knows where to clean hard.",
     "Removed noise / corrections (x4)": "What the restoration network changed, magnified 4x. Should look like grain, not like object edges.",
     "Noise-removal strength": "Edge-preserving denoising strength: strongest where shadows were lifted most.",
+    "Recovered detail (x4)": "Detail put back after noise removal, magnified 4x: only structure stronger than the measured noise, with a halo guard. Grey = nothing added.",
 }
 
 
@@ -64,7 +69,7 @@ def origin_allowed(origin):
 
 
 def decode_image(data):
-    """data URL or bare base64 -> (float RGB image capped at MAX_SIDE, note, original (w, h))."""
+    """data URL or bare base64 -> (float RGB image capped at OUTPUT_MAX, note, original (w, h))."""
     if not isinstance(data, str) or not data.strip():
         raise APIError("No image received. Choose a photo first.")
     b64 = data.split(",", 1)[1] if data.startswith("data:") else data
@@ -82,10 +87,11 @@ def decode_image(data):
     if min(h, w) < MIN_SIDE:
         raise APIError(f"That image is only {w}x{h} px - too small to restore (minimum {MIN_SIDE} px per side).")
     note = ""
-    if max(h, w) > MAX_SIDE:
-        s = MAX_SIDE / max(h, w)
+    if max(h, w) > OUTPUT_MAX:
+        s = OUTPUT_MAX / max(h, w)
         img = cv2.resize(img, (round(w * s), round(h * s)), interpolation=cv2.INTER_AREA)
-        note = f"Processed at {img.shape[1]}x{img.shape[0]} px (resized from {w}x{h}) to stay fast."
+        note = (f"Your photo is {w}x{h} px; results are returned at {img.shape[1]}x{img.shape[0]} px "
+                f"(the {OUTPUT_MAX} px limit keeps the free CPU server fast). ")
     return C.to_float(cv2.cvtColor(img, cv2.COLOR_BGR2RGB)), note, (w, h)
 
 
@@ -102,25 +108,42 @@ def encode(img, quality=90, max_side=None, fmt="webp"):
 
 
 def quality(img):
+    """No-reference checks; detail / colourfulness / blockiness are measured on a <=1280 px copy so
+    they are comparable between photos of different sizes."""
     q = M.no_reference(img, with_niqe=False)
+    s = MAX_SIDE / max(img.shape[:2])
+    small = cv2.resize(img, None, fx=s, fy=s, interpolation=cv2.INTER_AREA) if s < 1 else img
     return {"brightness": round(q["brightness"], 3), "noise": round(q["noise"], 2),
-            "clipped_pct": round(q["overexposed"], 2), "colour_cast": round(q["colour_cast"], 1)}
+            "clipped_pct": round(q["overexposed"], 2), "colour_cast": round(q["colour_cast"], 1),
+            "sharpness": round(A.sharpness_index(small), 4), "colourfulness": round(A.colourfulness(small), 3),
+            "blockiness": round(A.blockiness(small), 2)}
 
 
 def recommend(qualities, target):
     """Pick the output with the lowest weighted no-reference penalty. This is a heuristic (no ground
     truth exists for a user's photo), stated as such in the UI; it can and does pick any method."""
+    best_sharp = max(q.get("sharpness", 0) for q in qualities.values()) or 1.0
     terms = {m: {"exposure": abs(q["brightness"] - target) / 0.2, "noise": q["noise"] / 5.0,
-                 "clipping": q["clipped_pct"] / 1.0, "colour": q["colour_cast"] / 15.0}
+                 "clipping": q["clipped_pct"] / 1.0,
+                 "colour": q["colour_cast"] / 15.0 + max(q.get("colourfulness", 0) - 0.55, 0) / 0.2,
+                 "detail": 1 - q.get("sharpness", best_sharp) / best_sharp,
+                 "artefacts": max(q.get("blockiness", 1.0) - 1.1, 0) / 0.4}
              for m, q in qualities.items()}
     scores = {m: round(sum(WEIGHTS[k] * v for k, v in t.items()), 3) for m, t in terms.items()}
     best = min(scores, key=scores.get)
+    kept = best != "hybrid" and "hybrid" in scores and scores[best] > scores["hybrid"] - HYBRID_MARGIN
+    if kept:
+        best = "hybrid"
     labels = {"exposure": "closest to the target brightness", "noise": "least visible grain",
-              "clipping": "fewest blown-out pixels", "colour": "most neutral colour"}
+              "clipping": "fewest blown-out pixels", "colour": "most natural colour",
+              "detail": "most fine detail", "artefacts": "fewest compression artefacts"}
     reasons = [f"{labels[k]}" for k in WEIGHTS if min(terms, key=lambda m: terms[m][k]) == best]
     return {"method": best, "label": METHODS[best], "scores": scores, "weights": WEIGHTS,
             "target_brightness": round(target, 3),
-            "why": (f"{METHODS[best]} has the lowest combined penalty"
+            "margin": HYBRID_MARGIN,
+            "why": ("Hybrid is kept: no other output is clearly better (its penalty would have to be lower by more "
+                    f"than {HYBRID_MARGIN}). On validation photos the hybrid was the most reliable choice."
+                    if kept else f"{METHODS[best]} has the lowest combined penalty"
                     + (f": {', '.join(reasons)}." if reasons else "."))}
 
 
@@ -139,7 +162,7 @@ def restore(image: str, preset: str = "Auto (balanced)", strength: float = 1.0,
     runs = {}
     for key in METHODS:
         t = time.perf_counter()
-        runs[key] = P.run(x, key, preset, strength)
+        runs[key] = P.run_full(x, key, preset, strength, process_side=MAX_SIDE)
         runs[key]["ms"] = round((time.perf_counter() - t) * 1000)
     hyb = runs["hybrid"]
     d, p = hyb["diagnosis"], hyb["params"]
@@ -147,13 +170,23 @@ def restore(image: str, preset: str = "Auto (balanced)", strength: float = 1.0,
     level, why = A.recoverability(d, p)
     qualities = {k: quality(r["output"]) for k, r in runs.items()}
     target = A.TARGET_BRIGHTNESS * A.PRESETS[preset] * strength
+    (pw, ph), (ow, oh) = hyb["processed_size"], hyb["output_size"]
+    plan = A.strategy(d, p, P.FULL)
+    if (pw, ph) != (ow, oh):
+        note += (f"Enhanced at {pw}x{ph} px, then returned at {ow}x{oh} px: the fine detail is transferred "
+                 f"from your own photo (only where it is stronger than its noise), not invented.")
+        plan["operations"].append({"stage": "Full-size output", "decision": f"{pw}×{ph} → {ow}×{oh} px with detail transfer",
+                                   "why": "plain upscaling looks soft; the photo's own above-noise detail is added back"})
+    sizes = f"uploaded {w0}×{h0}, enhanced at {pw}×{ph}, output {ow}×{oh} px"
 
     out = {
-        "input": {"width": w0, "height": h0, "processed_width": x.shape[1], "processed_height": x.shape[0],
-                  "note": note, "quality": quality(x)},
+        "input": {"width": w0, "height": h0, "processed_width": pw, "processed_height": ph,
+                  "output_width": ow, "output_height": oh, "note": note.strip(), "quality": quality(x)},
         "diagnosis": A.as_dict(d),
         "params": A.as_dict(p),
         "recoverability": {"level": level, "why": why},
+        "diagnostics": A.quality_labels(d, p, p.sharp_restored, p.residual_noise, level, sizes),
+        "strategy": plan,
         "noticed": seen,
         "actions": did,
         "grain_uncovered": round(p.denoise_sigma, 1),

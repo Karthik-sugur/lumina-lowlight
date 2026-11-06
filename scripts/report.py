@@ -22,7 +22,7 @@ from lowlight import classical as C  # noqa: E402
 from lowlight import pipeline as P  # noqa: E402
 
 sys.path.insert(0, str(ROOT / "scripts"))
-from evaluate import trim_letterbox  # noqa: E402
+from evaluate import ABL_SETS, BEFORE, PAIRED, V2R, trim_letterbox  # noqa: E402
 
 DATA = Path(os.environ.get("DATA_DIR", "data"))
 RES, FIG = ROOT / "results", ROOT / "results" / "figures"
@@ -90,12 +90,20 @@ def read_input(s, name, src):
     return C.to_u8(trim_letterbox(C.to_float(cv2.imread(str(p)))))
 
 
+def gt_path(s, name, src):
+    return {"LOL-v1 eval15": src[s].parent / "high" / name, "LOL-v2 synthetic test": src[s].parent / "GT" / name[1:]
+            }.get(s, src[s].parent / "GT" / name)
+
+
 def failures(rows, src, exdark):
-    """Worst hybrid results: lowest PSNR on LOL-v2 real (paired) and highest NIQE on ExDark."""
+    """Worst hybrid results: lowest PSNR on the real paired sets (LOL-v1 eval15 + clean LOL-v2 real)
+    and highest NIQE on ExDark."""
     d = RES / "failures"
     d.mkdir(exist_ok=True)
+    for old in d.glob("failure_*.jpg"):
+        old.unlink()
     hyb = [r for r in rows if r["kind"] == "main" and r["method"] == "hybrid"]
-    worst = sorted([r for r in hyb if r["set"] == "LOL-v2 real test"], key=lambda r: float(r["psnr"]))[:3]
+    worst = sorted([r for r in hyb if r["set"] in ("LOL-v1 eval15", V2R)], key=lambda r: float(r["psnr"]))[:3]
     worst += sorted([r for r in hyb if r["set"] == exdark], key=lambda r: -float(r["niqe"]))[:3]
     lines = ["| Panel | Set | Image | PSNR | SSIM | NIQE | Diagnosis |", "|---|---|---|---|---|---|---|"]
     for i, r in enumerate(worst, 1):
@@ -105,7 +113,7 @@ def failures(rows, src, exdark):
         out = cv2.imread(str(DATA / "outputs" / "hybrid" / folder / f"{Path(name).stem}.png"))
         tiles = [inp, out]
         if s in src:
-            tiles.append(cv2.imread(str(src[s].parent / "GT" / name)))
+            tiles.append(cv2.imread(str(gt_path(s, name, src))))
         h = 300
         tiles = [cv2.resize(t, (int(t.shape[1] * h / t.shape[0]), h)) for t in tiles]
         cv2.imwrite(str(d / f"failure_{i}.jpg"), np.hstack(tiles), [cv2.IMWRITE_JPEG_QUALITY, 90])
@@ -128,7 +136,8 @@ def main():
     keys = list(P.METHODS.values())
     lat = m["latency_ms"]
     out = ["# Benchmark results\n", f"_Machine: {m['machine']}. All test images are unseen (never used for training, "
-           "validation or tuning). Best value per column in **bold**._\n"]
+           "validation or tuning); LOL-v2 real is restricted to the pairs whose input and reference are not "
+           "pixel-identical to any LOL-v1 our485 image. Best value per column in **bold**._\n"]
 
     # 1. main comparison, metrics in the order of the problem statement
     cols = [c for c in METRICS if c[0] in ("psnr", "ssim", "lpips", "niqe", "noise", "epi", "delta_e", "overexposed")]
@@ -137,7 +146,7 @@ def main():
         r = [(NAMES[k], {**main_[(s, k)], "latency": lat[NAMES[k]]["ms_600x400"]}) for k in keys]
         out.append(table(r, cols[:4] + [("latency", "Latency ms (600×400) ↓", False, "{:.0f}")] + cols[4:]))
     all_paired = {k: {c[0]: float(np.mean([main_[(s, k)][c[0]] for s in paired])) for c in cols} for k in keys}
-    out.append("\n### Average over the three paired test sets (215 pairs, sets weighted equally)\n")
+    out.append(f"\n### Average over the three paired test sets ({sum(m['n_images'][s] for s in paired)} pairs, sets weighted equally)\n")
     out.append(table([(NAMES[k], all_paired[k]) for k in keys], cols))
     out.append(f"\n### {exdark} ({m['n_images'][exdark]} real-world night photos, no ground truth)\n")
     nr = [("niqe", "NIQE ↓", False, "{:.2f}"), ("noise", "Residual noise σ ↓", False, "{:.2f}"),
@@ -149,8 +158,18 @@ def main():
     # 2. ablation
     abl = {tuple(k.split("|")): v for k, v in m["ablation"].items()}
     names = [n for n in P.ABLATIONS if ("LOL-v1 eval15", n) in abl]
+    if (exdark, BEFORE) in abl:
+        out.append("\n## Quality-aware update: before vs after (hybrid)\n\n| Test set | Version | PSNR ↑ | SSIM ↑ | LPIPS ↓ | NIQE ↓ | Noise σ ↓ | Colourfulness | Blockiness ↓ | Detail |\n|---|---|---|---|---|---|---|---|---|---|\n")
+        f = lambda v, k, fmt: fmt.format(v[k]) if k in v else "-"  # noqa: E731
+        for s in ABL_SETS + (exdark,):
+            for lab, n in (("before", BEFORE), ("after", "Hybrid (full)")):
+                v = abl[(s, n)]
+                out.append(f"| {s} | {lab} | {f(v, 'psnr', '{:.2f}')} | {f(v, 'ssim', '{:.3f}')} | {f(v, 'lpips', '{:.3f}')} | "
+                           f"{f(v, 'niqe', '{:.2f}')} | {f(v, 'noise', '{:.2f}')} | {f(v, 'colourfulness', '{:.2f}')} | "
+                           f"{f(v, 'blockiness', '{:.2f}')} | {f(v, 'detail_ratio', '{:.2f}') if 'detail_ratio' in v else f(v, 'sharpness', '{:.3f}')} |\n")
+        out.append("\n_Detail: paired sets = sharpness relative to the reference (1 = equal); ExDark = absolute sharpness index._\n")
     out.append("\n## Ablation study (hybrid, one component removed at a time)\n")
-    for s in ("LOL-v1 eval15", "LOL-v2 real test"):
+    for s in ABL_SETS:
         full = abl[(s, "Hybrid (full)")]
         r = []
         for n in names:
@@ -168,7 +187,7 @@ def main():
     rob = {tuple(k.split("|")): v for k, v in m["robustness"].items()}
     conds = list(dict.fromkeys(k[0] for k in rob))
     rkeys = [k for k in keys if (conds[0], k) in rob]
-    out.append("\n## Robustness across illumination conditions (synthetic, 30 unseen LOL-v2 references)\n")
+    out.append("\n## Robustness across illumination conditions (synthetic, 30 unseen LOL-v2 synthetic references)\n")
     out.append("_Exposure scaled in linear light, plus Poisson shot and Gaussian read noise. Spotlight = strongly non-uniform lighting._\n\n")
     out.append("| Method | " + " | ".join(conds) + " |\n|---|" + "---|" * len(conds) + "\n")
     for k in rkeys:
@@ -178,17 +197,34 @@ def main():
              else f"{rob[(c, k)]['psnr']:.2f} / {rob[(c, k)]['ssim']:.3f}") for c in conds) + " |\n")
     out.append("\n_Cells: PSNR (dB) / SSIM._\n")
 
-    # 4. efficiency
-    out.append("\n## Efficiency (CPU only)\n\n| Method | 600×400 (ms) | 1280×960 (ms) |\n|---|---|---|\n")
+    # 4. Auto mode
+    if "auto" in m:
+        out.append("\n## Auto mode: per-image method choice from no-reference checks\n\n"
+                   "| Test set | Picks (classical / DL / hybrid) | Auto PSNR / SSIM | Always hybrid PSNR / SSIM | Oracle (best PSNR per image) |\n|---|---|---|---|---|\n")
+        for s in paired:
+            a = m["auto"][s]
+            pk = " / ".join(str(a["picks"].get(k, 0)) for k in ("classical", "dl", "hybrid"))
+            o = a.get("oracle_best_psnr", {})
+            out.append(f"| {s} | {pk} | {a['auto']['psnr']:.2f} / {a['auto']['ssim']:.3f} | "
+                       f"{main_[(s, 'hybrid')]['psnr']:.2f} / {main_[(s, 'hybrid')]['ssim']:.3f} | "
+                       f"{o.get('psnr', float('nan')):.2f} / {o.get('ssim', float('nan')):.3f} |\n")
+        a = m["auto"][exdark]
+        out.append(f"| {exdark} | " + " / ".join(str(a["picks"].get(k, 0)) for k in ("classical", "dl", "hybrid"))
+                   + f" | NIQE {a['auto']['niqe']:.2f} | NIQE {main_[(exdark, 'hybrid')]['niqe']:.2f} | - |\n")
+        out.append("\n_The oracle needs the ground truth, so no app can reach it; it shows the headroom of choosing per image._\n")
+
+    # 5. efficiency
+    out.append("\n## Efficiency (CPU only)\n\n| Method | 600×400 (ms) | 1280×960 (ms) | 2048×1536 upload, full-size output (ms) |\n|---|---|---|---|\n")
     for k in keys:
-        out.append(f"| {NAMES[k]} | {lat[NAMES[k]]['ms_600x400']:.0f} | {lat[NAMES[k]]['ms_1280x960']:.0f} |\n")
+        L = lat[NAMES[k]]
+        out.append(f"| {NAMES[k]} | {L['ms_600x400']:.0f} | {L['ms_1280x960']:.0f} | {L.get('ms_2048x1536_full_size', float('nan')):.0f} |\n")
     out.append("\n| Model | Parameters | File size |\n|---|---|---|\n")
     for n, v in m["models"].items():
         out.append(f"| {n} | {v['params']:,} | {v['file_kb']} KB |\n")
     (RES / "tables.md").write_text("".join(out), encoding="utf-8")
 
     # ---------- figures ----------
-    groups = [s.replace(" test", "").replace(" ", "\n", 1) for s in paired]
+    groups = [s.replace(" test", "").replace(" (clean subset)", " clean").replace(" ", "\n", 1) for s in paired]
     fig, axs = plt.subplots(1, 3, figsize=(13, 3.8))
     for ax, (k, lab) in zip(axs, [("psnr", "PSNR (dB) ↑"), ("ssim", "SSIM ↑"), ("lpips", "LPIPS ↓")]):
         vals = {g: {mk: main_[(s, mk)][k] for mk in keys} for g, s in zip(groups, paired)}
@@ -218,8 +254,8 @@ def main():
     plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(8, 4.2))
-    full = np.mean([abl[(s, "Hybrid (full)")]["psnr"] for s in ("LOL-v1 eval15", "LOL-v2 real test")])
-    items = [(n, np.mean([abl[(s, n)]["psnr"] for s in ("LOL-v1 eval15", "LOL-v2 real test")]) - full) for n in names[1:]]
+    full = np.mean([abl[(s, "Hybrid (full)")]["psnr"] for s in ABL_SETS])
+    items = [(n, np.mean([abl[(s, n)]["psnr"] for s in ABL_SETS]) - full) for n in names[1:]]
     items.sort(key=lambda t: t[1])
     ax.barh([n for n, _ in items], [d for _, d in items], color="#2a78d6", height=0.6)
     for i, (_, d) in enumerate(items):
@@ -227,7 +263,7 @@ def main():
                     ha="right" if d < 0 else "left", va="center", fontsize=8, color=INK)
     ax.axvline(0, color=INK2, lw=1)
     ax.margins(x=0.18)
-    ax.set_xlabel("ΔPSNR (dB) when removed — avg. of LOL-v1 eval15 and LOL-v2 real")
+    ax.set_xlabel("ΔPSNR (dB) when removed — avg. of LOL-v1 eval15 and LOL-v2 synthetic")
     ax.set_title("Ablation: what each component contributes", loc="left", fontsize=12)
     ax.grid(axis="y", visible=False)
     fig.tight_layout()
@@ -258,9 +294,9 @@ def main():
     plt.close(fig)
 
     # visual grid: 4 unseen examples x methods
-    picks = [("LOL-v1 eval15", "1.png"), ("LOL-v2 real test", "00748.png"), ("LOL-v2 synthetic test", None), (exdark, None)]
+    picks = [("LOL-v1 eval15", "1.png"), (V2R, "00753.png"), ("LOL-v2 synthetic test", None), (exdark, None)]
     src = {"LOL-v1 eval15": DATA / "lol" / "lol_dataset" / "eval15" / "low",
-           "LOL-v2 real test": DATA / "lolv2_real" / "Test" / "Input",
+           V2R: DATA / "lolv2_real" / "Test" / "Input",
            "LOL-v2 synthetic test": DATA / "lolv2_synthetic" / "Test" / "Input"}
     grid_rows = []
     for s, name in picks:

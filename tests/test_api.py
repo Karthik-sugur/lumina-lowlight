@@ -41,7 +41,8 @@ def test_restore_returns_all_three_real_outputs():
         out = decode(r["image"])
         assert out.shape == (120, 160, 3)
         assert out.mean() > dark_scene().mean()          # actually brightened
-        assert r["ms"] >= 0 and set(r["quality"]) == {"brightness", "noise", "clipped_pct", "colour_cast"}
+        assert r["ms"] >= 0 and {"brightness", "noise", "clipped_pct", "colour_cast", "sharpness",
+                                 "colourfulness", "blockiness"} == set(r["quality"])
     assert res["recommendation"]["method"] in res["results"]
     assert res["recoverability"]["level"] in {"High", "Medium", "Low"}
     assert res["noticed"] and res["actions"] and res["intermediates"]
@@ -55,10 +56,24 @@ def test_outputs_differ_between_methods():
     assert np.abs(imgs["hybrid"] - imgs["dl"]).mean() > 1
 
 
-def test_large_image_is_resized_with_note():
+def test_large_image_keeps_its_size_with_note():
     res = api.restore(data_url(dark_scene(1500, 2000)))
-    assert res["input"]["processed_width"] == api.MAX_SIDE
-    assert "resized from 2000x1500" in res["input"]["note"]
+    assert res["input"]["processed_width"] == api.MAX_SIDE          # enhanced at <= 1280 px ...
+    assert (res["input"]["output_width"], res["input"]["output_height"]) == (2000, 1500)  # ... returned full size
+    assert decode(res["results"]["hybrid"]["image"]).shape == (1500, 2000, 3)
+    assert "returned at 2000x1500" in res["input"]["note"]
+
+
+def test_huge_image_is_capped_and_says_so():
+    res = api.restore(data_url(dark_scene(1200, 3000)))
+    assert res["input"]["output_width"] == api.OUTPUT_MAX and "3000x1200" in res["input"]["note"]
+
+
+def test_diagnostics_and_strategy_are_reported():
+    res = api.restore(data_url(dark_scene()))
+    assert {"illumination", "noise", "sharpness", "colour", "recoverability"} <= set(res["diagnostics"])
+    assert res["diagnostics"]["illumination"]["label"].startswith("Low")
+    assert res["strategy"]["cases"] and all({"stage", "decision", "why"} <= set(o) for o in res["strategy"]["operations"])
 
 
 def test_png_and_greyscale_inputs():
@@ -95,3 +110,10 @@ def test_origin_allow_list(monkeypatch):
     assert not api.origin_allowed(None)
     monkeypatch.setattr(api, "ALLOWED_ORIGINS", [])
     assert api.origin_allowed("https://anything.example")
+
+
+def test_auto_keeps_hybrid_unless_clearly_beaten():
+    base = {"brightness": 0.42, "noise": 1.0, "clipped_pct": 0.0, "colour_cast": 2.0}
+    q = {"classical": dict(base, noise=0.5), "dl": dict(base, noise=3.0), "hybrid": dict(base, noise=1.0)}
+    r = api.recommend(q, 0.42)   # classical only 0.03 better: not a clear win
+    assert r["method"] == "hybrid" and "kept" in r["why"]

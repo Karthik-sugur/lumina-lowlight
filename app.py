@@ -30,7 +30,8 @@ except ImportError:  # local / Docker runs
     pass
 
 ROOT = Path(__file__).resolve().parent
-MAX_SIDE = int(os.environ.get("MAX_SIDE", 1280))  # keeps every request well under ~10 s on 2 vCPUs
+MAX_SIDE = int(os.environ.get("MAX_SIDE", 1280))  # the pipeline runs at <= this (speed on 2 vCPUs)
+OUTPUT_MAX = int(os.environ.get("OUTPUT_MAX", 2048))  # results keep the photo size up to this
 MIN_SIDE = 32
 OUT_DIR = Path(tempfile.gettempdir()) / "lumina"
 OUT_DIR.mkdir(exist_ok=True)
@@ -52,10 +53,13 @@ def load_input(img):
     if min(h, w) < MIN_SIDE:
         raise gr.Error(f"That image is only {w}x{h} px - too small to restore. Please use one at least {MIN_SIDE} px per side.")
     note = ""
-    if max(h, w) > MAX_SIDE:
-        s = MAX_SIDE / max(h, w)
+    if max(h, w) > OUTPUT_MAX:
+        s = OUTPUT_MAX / max(h, w)
         img = cv2.resize(img, (round(w * s), round(h * s)), interpolation=cv2.INTER_AREA)
-        note = f"Resized from {w}x{h} to {img.shape[1]}x{img.shape[0]} px to keep it fast."
+        note = f"Resized from {w}x{h} to {img.shape[1]}x{img.shape[0]} px (output limit {OUTPUT_MAX} px)."
+    if max(img.shape[:2]) > MAX_SIDE:
+        note += (f" Enhanced at <= {MAX_SIDE} px and returned at {img.shape[1]}x{img.shape[0]} px with the"
+                 " photo's own fine detail transferred back (only where stronger than its noise).")
     return img, C.to_float(img), note
 
 
@@ -81,7 +85,7 @@ def enhance(img, preset, strength):
     u8, x, note = load_input(img)
     t0 = time.perf_counter()
     try:
-        r = P.run(x, "hybrid", preset, strength)
+        r = P.run_full(x, "hybrid", preset, strength, process_side=MAX_SIDE)
     except Exception as e:  # never show a stack trace to a user
         raise gr.Error(f"Sorry - processing failed ({type(e).__name__}). Please try another photo.") from e
     secs = time.perf_counter() - t0
@@ -119,7 +123,7 @@ def compare(img, preset, strength):
     items, rows = [(u8, "Input")], []
     for name, key in P.METHODS.items():
         t0 = time.perf_counter()
-        out = P.run(x, key, preset, strength)["output"]
+        out = P.run_full(x, key, preset, strength, process_side=MAX_SIDE)["output"]
         ms = (time.perf_counter() - t0) * 1000
         q = M.no_reference(out, with_niqe=False)
         items.append((C.to_u8(out), f"{name} - {ms:.0f} ms"))

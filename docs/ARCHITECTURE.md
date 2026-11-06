@@ -4,16 +4,18 @@ Every box below is a function in the code; file and function names are given so 
 
 ```mermaid
 flowchart TD
-    U([User: phone / laptop browser]) -->|LUMINA web app on Vercel<br/>web/index.html + ui.js + lumina.js| API["api.py restore()<br/>POST /gradio_api/call/restore<br/>validation, resize ≤1280 px"]
+    U([User: phone / laptop browser]) -->|LUMINA web app on Vercel<br/>web/index.html + ui.js + lumina.js| API["api.py restore()<br/>POST /gradio_api/call/restore<br/>validation, cap ≤2048 px (stated)"]
     U -.->|classic interface / fallback| APP["app.py — Gradio UI"]
-    API --> RUN["pipeline.run(img, method, preset, strength)<br/>for classical, dl and hybrid"]
-    APP --> RUN
+    API --> FULL["pipeline.run_full<br/>enhance at ≤1280 px, return input size"]
+    APP --> FULL
+    FULL --> RUN["pipeline.run(img, method, preset, strength)<br/>for classical, dl and hybrid"]
 
     subgraph S1["① Classical analysis (lowlight/classical.py, lowlight/analysis.py)"]
         T["estimate_illumination<br/>max-RGB prior + guided filter → T"]
-        D["diagnose<br/>brightness, noise σ (Immerkær), lighting spread,<br/>colour cast, coloured lights, contrast"]
-        PR["choose_params + solve_gamma<br/>adaptive γ, CLAHE clip/weight, WB, saturation"]
-        T --> D --> PR
+        D["diagnose<br/>brightness, noise σ (Immerkær), lighting spread,<br/>colour cast, coloured lights, contrast,<br/>sharpness, edges, colourfulness, JPEG blockiness, size"]
+        PR["choose_params + solve_gamma<br/>adaptive γ, gain cap, CLAHE, WB, saturation,<br/>pre-denoise / deblock decision"]
+        PD["pre_denoise<br/>chroma + 8×8-boundary deblock<br/>(blocky JPEG; noisy classical path)"]
+        T --> D --> PR --> PD
     end
 
     subgraph S2["② Two brightening candidates"]
@@ -31,7 +33,7 @@ flowchart TD
     end
 
     subgraph S4["④ Contrast & colour (classical.py)"]
-        CL["clahe (Lab L, 16-bit)"] --> CC["colour_correct<br/>partial gray-world + saturation"]
+        CL["clahe (Lab L, 16-bit)"] --> CC["colour_correct<br/>partial gray-world + saturation"] --> LS["limit_saturation<br/>natural colourfulness ceiling"]
     end
 
     subgraph S5["⑤ DL restoration (lowlight/restore.py)"]
@@ -41,14 +43,16 @@ flowchart TD
     end
 
     RUN --> T
-    PR --> RX & DC
+    PD --> RX & DC
     RX --> FW
     QA --> FW
     HG --> CL
-    CC --> RN
+    LS --> RN
     HG --> NM
-    RN --> UI["adjust_exposure (user intent)"]
-    UI --> OUT(["api.py JSON: three outputs as WebP, diagnosis, explanations,<br/>no-reference checks, intermediate maps, timings, recommendation"])
+    RN --> DR["⑥ detail_stage → recover_detail<br/>re-inject above-noise detail, 2-scale guided USM,<br/>halo clamp; strengths from residual noise + sharpness"]
+    DR --> UI["adjust_exposure (user intent)"]
+    UI --> TRF["⑦ run_full detail transfer<br/>photo's own fine band × gain, cored + structure-gated"]
+    TRF --> OUT(["api.py JSON: three outputs as WebP at the input size, diagnostics labels,<br/>enhancement breakdown, explanations, no-reference checks,<br/>intermediate maps, timings, Auto-mode recommendation"])
 
     style S5 fill:#eef4fc,stroke:#2a78d6
     style S1 fill:#f4fbf7,stroke:#1baf7a
@@ -61,9 +65,9 @@ flowchart TD
 | Histogram equalisation (baseline) | `classical.histogram_equalize` |
 | CLAHE only (baseline) | `classical.clahe` |
 | Zero-DCE++ official (baseline) | published weights, no fine-tuning |
-| **Classical only** | ① → Retinex → highlight guard → gain-aware bilateral + guided denoise → ④ → detail enhancement |
+| **Classical only** | ① (+ pre-denoise) → Retinex → highlight guard → gain-aware bilateral + guided denoise → ④ → ⑥ adaptive detail recovery |
 | **Deep learning only** | fine-tuned Zero-DCE++ alone |
-| **Hybrid** | ① → ② → ③ → ④ → ⑤ (diagram above) |
+| **Hybrid** | ① → ② → ③ → ④ → ⑤ → ⑥ (diagram above); every method gets ⑦ when the photo is larger than 1280 px |
 
 Ablations (`pipeline.ABLATIONS`) switch off one stage at a time using the same function.
 

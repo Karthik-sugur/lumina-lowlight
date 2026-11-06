@@ -19,7 +19,7 @@ from lowlight import classical as C  # noqa: E402
 from lowlight import pipeline as P  # noqa: E402
 
 WEB = ROOT / "web"
-SAMPLES = ["01_lolv2_indoor_1", "02_lolv2_indoor_2", "03_exdark_bus_stop_streetlight",
+SAMPLES = ["01_lolv2_indoor_1", "02_lolv2_stadium_seats", "03_exdark_bus_stop_streetlight",
            "04_exdark_dark_road_lamps", "05_exdark_neon_sign_coloured_lights", "08_exdark_dogs_near_black"]
 
 
@@ -37,13 +37,16 @@ def main():
         "ablation": {},
         "latency_ms": m["latency_ms"],
         "models": m["models"],
+        "auto": m.get("auto", {}),
     }
     for key, v in m["robustness"].items():
         cond, method = key.split("|")
         out["robustness"].setdefault(cond, {})[method] = {"psnr": v["psnr"], "ssim": v["ssim"]}
-    for key, v in m["ablation"].items():
+    order = list(P.ABLATIONS)  # table rows in the pipeline's ablation order, not completion order
+    for key, v in sorted(m["ablation"].items(), key=lambda kv: order.index(kv[0].split("|")[1])):
         s, variant = key.split("|")
-        out["ablation"].setdefault(s, {})[variant] = {k: v[k] for k in ("psnr", "ssim", "lpips", "niqe")}
+        out["ablation"].setdefault(s, {})[variant] = {k: v[k] for k in ("psnr", "ssim", "lpips", "niqe", "noise",
+                                                                     "colourfulness", "blockiness", "detail_ratio") if k in v}
     (WEB / "benchmarks.json").write_text(json.dumps(out, indent=1))
 
     (WEB / "samples").mkdir(parents=True, exist_ok=True)

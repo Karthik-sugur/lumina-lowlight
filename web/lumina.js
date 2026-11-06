@@ -13,7 +13,7 @@
   const NAME = { classical: "Classical CV", dl: "Deep Learning", hybrid: "Hybrid Intelligence" };
   const ORDER = ["classical", "dl", "hybrid"];
   const PRESETS = [["Natural night mood", "Natural night"], ["Auto (balanced)", "Auto"], ["Maximum visibility", "Max visibility"]];
-  const SAMPLES = [["01_lolv2_indoor_1", "Meeting room"], ["02_lolv2_indoor_2", "Swimming pool"],
+  const SAMPLES = [["01_lolv2_indoor_1", "Meeting room"], ["02_lolv2_stadium_seats", "Stadium seats"],
     ["03_exdark_bus_stop_streetlight", "Bus stop, night"], ["04_exdark_dark_road_lamps", "Road with lamps"],
     ["05_exdark_neon_sign_coloured_lights", "Neon sign"], ["08_exdark_dogs_near_black", "Near-black (hard)"]];
   const E = { online: null, res: null, key: null, imgId: 0, base: {}, preset: "Auto (balanced)", strength: 1,
@@ -81,10 +81,15 @@
     const w0 = src ? src.width : S.img.width, h0 = src ? src.height : S.img.height;
     const k = Math.min(1, SEND_MAX / Math.max(w0, h0)), c = document.createElement("canvas");
     c.width = Math.round(w0 * k); c.height = Math.round(h0 * k);
+    E.sentNote = k < 1 ? `Your photo is ${w0}×${h0} px; it was reduced to ${c.width}×${c.height} px before upload (the free server’s size limit), so results are ${c.width}×${c.height} px.` : "";
+    // no resize needed: send the file's own bytes, so re-encoding adds no JPEG blocks before the engine measures them
+    if (k === 1 && S.file && /^image\/(jpeg|png|webp)$/.test(S.file.type)) {
+      return await new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = () => bad(new Error("Couldn’t read the file.")); r.readAsDataURL(S.file); });
+    }
     const x = c.getContext("2d");
     if (src) x.drawImage(src, 0, 0, c.width, c.height);
     else { const t = document.createElement("canvas"); put(t, S.img); x.drawImage(t, 0, 0, c.width, c.height); }
-    return c.toDataURL("image/jpeg", 0.92);
+    return c.toDataURL("image/jpeg", 0.95);
   }
 
   /* ---------- API: POST /gradio_api/call/restore, then read the server-sent event stream ---------- */
@@ -167,6 +172,7 @@
       const res = await callRestore(await toDataUrl(), E.preset, E.strength);
       if (id !== E.req || img !== E.imgId) return;          // superseded, or a new image was loaded
       res.wall_ms = performance.now() - t0; res._img = img;
+      if (E.sentNote) res.input.note = `${E.sentNote} ${res.input.note || ""}`.trim();
       E.res = res; E.key = key; E.base = {}; E.online = true; paint();
       if (auto) pickMode(res.recommendation.method);
       await show(true);
@@ -221,9 +227,20 @@
 
   /* analysis tab: the engine's measurements (the quick in-browser estimate stays available) */
   const row = (label, val, frac, tip) => `<div class="brow"><div><span data-tip="${esc(tip)}" tabindex="0">${label}</span><b>${val}</b></div><i><b style="width:${Math.round(Math.min(1, Math.max(0, frac)) * 100)}%"></b></i></div>`;
+  const DIAG = [["illumination", "Illumination"], ["noise", "Noise"], ["sharpness", "Sharpness"], ["colour", "Colour quality"],
+    ["compression", "Compression"], ["resolution", "Resolution"], ["recoverability", "Recoverability"]];
+  function diagnosticsHTML(r) {   // every label comes with the measured value behind it
+    if (!r.diagnostics) return "";
+    const item = (k, v, sub) => `<div style="padding:7px 0;border-bottom:1px solid var(--line)"><div style="display:flex;justify-content:space-between;gap:10px;font-size:13px"><span>${k}</span><b style="font-weight:500;text-align:right">${v}</b></div>${sub ? `<div class="note" style="font-size:12px;margin-top:2px">${sub}</div>` : ""}</div>`;
+    return `<h4 style="font-weight:500;margin:4px 0 4px">Image quality diagnostics</h4>`
+      + DIAG.filter(([k]) => r.diagnostics[k]).map(([k, n]) => item(n, esc(r.diagnostics[k].label), esc(r.diagnostics[k].value))).join("")
+      + `<details class="dt" open style="margin-top:12px"><summary>Enhancement breakdown</summary><div style="margin:6px 0 2px">${r.strategy.cases.map((c) => `<span class="chip ill" style="margin:0 4px 4px 0">${esc(c)}</span>`).join("")}</div>`
+      + r.strategy.operations.map((o) => item(esc(o.stage), esc(o.decision), esc(o.why))).join("") + `</details>`;
+  }
   function analysisHTML(r) {
     const d = r.diagnosis, rec = r.recoverability, lv = { High: "ok", Medium: "ill", Low: "un" }[rec.level] || "un";
     return `<p class="note"><b>Measured by the LUMINA engine</b><span class="chip ${lv}">Recoverability: ${esc(rec.level)}</span><br>${esc(rec.why)}</p>`
+      + diagnosticsHTML(r) + `<h4 style="font-weight:500;margin:14px 0 8px">Measurements</h4>`
       + row("Brightness", pct(d.brightness), d.brightness, "Mean luminance of the input (bar: 0–100%).")
       + row("Near-black pixels", pct(d.dark_fraction), d.dark_fraction, "Share of pixels with luminance below 10%.")
       + row("Sensor noise σ (as captured)", fmt(d.noise_sigma, 1), d.noise_sigma / 10, "Immerkær estimate on the input, in /255 units (bar: 0–10). 8-bit quantisation hides noise in dark images.")
@@ -250,14 +267,14 @@
     const el = $("#cmp");
     if (!S.img) { el.innerHTML = empty("Load an image in the Studio to compare approaches."); return; }
     const res = current(), ar = `style="aspect-ratio:${S.img.width}/${S.img.height}"`;
-    const q = (x) => `<ul><li>Brightness<b>${pct(x.quality.brightness)}</b></li><li>Grain σ<b>${fmt(x.quality.noise, 1)}</b></li><li>Blown-out<b>${fmt(x.quality.clipped_pct, 2)}%</b></li><li>Colour cast<b>${fmt(x.quality.colour_cast, 1)}</b></li>${x.ms !== undefined ? `<li>Time<b>${x.ms} ms</b></li>` : ""}</ul>`;
+    const q = (x) => `<ul><li>Brightness<b>${pct(x.quality.brightness)}</b></li><li>Grain σ<b>${fmt(x.quality.noise, 1)}</b></li><li>Blown-out<b>${fmt(x.quality.clipped_pct, 2)}%</b></li><li>Colour cast<b>${fmt(x.quality.colour_cast, 1)}</b></li>${x.quality.sharpness !== undefined ? `<li>Detail<b>${fmt(x.quality.sharpness, 3)}</b></li><li>Colourfulness<b>${fmt(x.quality.colourfulness, 2)}</b></li><li>Blockiness<b>${fmt(x.quality.blockiness, 2)}</b></li>` : ""}${x.ms !== undefined ? `<li>Time<b>${x.ms} ms</b></li>` : ""}</ul>`;
     const pane = (k) => !res
       ? `<figure class="pane${k === "hybrid" ? " hy" : ""}"><div class="pv nap" ${ar}><div class="na"><div>Not run yet<br><small>Press “Run all methods on the engine”</small></div></div></div><h4>${NAME[k]}</h4><ul><li>Metrics<b>—</b></li><li>Time<b>—</b></li></ul></figure>`
       : `<figure class="pane${k === "hybrid" ? " hy" : ""}"><div class="pv" ${ar}><canvas data-c="${k}"></canvas></div><h4>${NAME[k]}${res.recommendation.method === k ? '<span class="chip ok">Recommended</span>' : ""}</h4>${q(res.results[k])}<button class="pill sm" data-dl="${k}" style="margin:4px 6px 6px">Download</button></figure>`;
-    el.innerHTML = `<div class="row2" style="margin:0 0 14px;align-items:center;flex-wrap:wrap"><button class="pill sm dk" id="runcmp" ${E.busy ? "disabled" : ""}>${res ? "Re-run all methods" : "Run all methods on the engine"}</button><span class="note" id="cmpst">${res ? `Same input through all three pipelines · engine time ${res.total_ms} ms · processed at ${res.input.processed_width}×${res.input.processed_height} px` : "Classical, Deep Learning and Hybrid run on the LUMINA engine in one request."}</span></div>
+    el.innerHTML = `<div class="row2" style="margin:0 0 14px;align-items:center;flex-wrap:wrap"><button class="pill sm dk" id="runcmp" ${E.busy ? "disabled" : ""}>${res ? "Re-run all methods" : "Run all methods on the engine"}</button><span class="note" id="cmpst">${res ? `Same input through all three pipelines · engine time ${res.total_ms} ms · enhanced at ${res.input.processed_width}×${res.input.processed_height} px · output ${res.input.output_width || res.input.processed_width}×${res.input.output_height || res.input.processed_height} px` : "Classical, Deep Learning and Hybrid run on the LUMINA engine in one request."}</span></div>
       <div class="cg"><figure class="pane"><div class="pv" ${ar}><canvas id="k0"></canvas></div><h4>Original</h4>${res ? q(res.input) : ""}<button class="pill sm" data-dl="original" style="margin:4px 6px 6px">Download</button></figure>${ORDER.map(pane).join("")}</div>
       ${res ? `<div class="card" style="margin-top:16px"><h4 style="font-weight:500">Recommendation: ${esc(NAME[res.recommendation.method])}</h4><p class="note">${esc(res.recommendation.why)}</p>
-        <p class="note">Penalty, lower is better: ${ORDER.map((k) => `${NAME[k]} <b>${fmt(res.recommendation.scores[k], 2)}</b>`).join(" · ")}. Score = ${Object.entries(res.recommendation.weights).map(([k, w]) => `${w}×${k}`).join(" + ")}, where exposure = |brightness − ${pct(res.recommendation.target_brightness)} target| / 0.2, noise = σ / 5, clipping = blown-out % / 1, colour = cast / 15.</p>
+        <p class="note">Penalty, lower is better: ${ORDER.map((k) => `${NAME[k]} <b>${fmt(res.recommendation.scores[k], 2)}</b>`).join(" · ")}. Score = ${Object.entries(res.recommendation.weights).map(([k, w]) => `${w}×${k}`).join(" + ")}${res.recommendation.margin ? `; another method replaces Hybrid only if its score is lower by more than ${res.recommendation.margin}` : ""}, where exposure = |brightness − ${pct(res.recommendation.target_brightness)} target| / 0.2, noise = σ / 5, clipping = blown-out % / 1, colour = cast / 15 + oversaturation above 0.55 / 0.2, detail = shortfall vs the sharpest output, artefacts = blockiness above 1.1 / 0.4.</p>
         <p class="note">These are no-reference checks: your photo has no ground-truth reference, so PSNR, SSIM and LPIPS can’t be computed for it. They are measured on reference datasets in Benchmarks.</p></div>`
       : '<p class="note">Metrics appear after the run. They are no-reference checks; PSNR and SSIM need a ground-truth reference (see Benchmarks).</p>'}`;
     put($("#k0"), S.img);
@@ -277,8 +294,8 @@
 
   /* ---------- Technology: the seven stages with this photo's real intermediate outputs ---------- */
   const STAGES = [
-    ["Image analysis", "Measures brightness, noise, lighting spread, colour cast and contrast so every later stage adapts to this photo.",
-      "Luminance statistics; Immerkær noise estimate (σ in /255 units); lighting spread = p90 − p10 of log₂ illumination (stops); colour cast = chroma of the mean mid-tone colour in Lab; coloured-light detection. These set the brightness target, Retinex exponent, CLAHE, white balance and saturation.",
+    ["Image analysis", "Measures brightness, noise, sharpness, colour, compression and lighting so every later stage adapts to this photo.",
+      "Luminance statistics; Immerkær noise estimate (σ in /255 units); lighting spread = p90 − p10 of log₂ illumination (stops); colour cast = chroma of the mean mid-tone colour in Lab; colourfulness = chroma ÷ lightness; sharpness = exposure-normalised Laplacian energy; JPEG blockiness = 8-px grid step energy. These set the brightness target, gain limit, pre-denoising, CLAHE, white balance, saturation ceiling and detail recovery.",
       "RGB image → diagnosis → adaptive parameters", "analysis"],
     ["Illumination estimation", "Finds how much light reached each part of the scene, so dark regions can be lifted without blowing out bright ones.",
       "T = max(R, G, B), refined with an edge-aware guided filter in √-space (radius 1.5% of the image size), so the map is smooth inside regions but follows object edges, which prevents halos.",
@@ -292,11 +309,11 @@
     ["Deep-learning restoration", "A fine-tuned Zero-DCE++ network estimates per-pixel tone curves; a quality check picks how strongly to apply them.",
       "10.6k-parameter curve network fine-tuned on LOL (seeded 435/50 train/validation split). Curves are pixel-wise and monotone, so the network re-tones pixels but can’t invent content. Deep Learning mode shows this network’s output on its own.",
       "Image → curve map → Deep Learning result", [["viz", "Curve strength |A|"], ["res", "dl"]]],
-    ["Adaptive hybrid fusion", "Blends both candidates pixel by pixel, then a restoration U-Net removes the noise that brightening uncovered.",
-      "Fusion weight = well-exposedness × detail ÷ amplification, blended with a 5-level Laplacian pyramid. The 145k-parameter restoration U-Net (v3) is conditioned on a noise-level map derived from the illumination model.",
-      "Both candidates + noise map → Hybrid result", [["viz", "DL candidate (Zero-DCE++)"], ["viz", "Fusion weight (DL share)"], ["viz", "Noise-level map (to DL)"], ["viz", "Removed noise / corrections (x4)"], ["res", "hybrid"]]],
+    ["Adaptive hybrid fusion", "Blends both candidates pixel by pixel, a restoration U-Net removes the noise brightening uncovered, then detail is recovered only where it is real.",
+      "Fusion weight = well-exposedness × detail ÷ amplification, blended with a 5-level Laplacian pyramid. The 145k-parameter restoration U-Net (v3) is conditioned on a noise-level map derived from the illumination model. Detail recovery runs after denoising: removed detail stronger than the local noise is re-injected, then two-scale guided unsharp masking (cored at the residual noise, halo-clamped) with strengths that drop for noisy, already-sharp or blocky photos. Large photos are enhanced at ≤1280 px and returned at full size by transferring the photo’s own above-noise fine detail.",
+      "Both candidates + noise map → restoration → detail recovery → Hybrid result", [["viz", "DL candidate (Zero-DCE++)"], ["viz", "Fusion weight (DL share)"], ["viz", "Noise-level map (to DL)"], ["viz", "Removed noise / corrections (x4)"], ["viz", "Recovered detail (x4)"], ["res", "hybrid"]]],
     ["Quality validation", "Checks every output with no-reference measures and recommends one, transparently, for this photo.",
-      "Brightness vs target, residual grain (Immerkær σ), blown-out pixels and colour cast form a weighted penalty. PSNR, SSIM and LPIPS need a ground-truth photo, so they are reported on benchmark datasets (Benchmarks page).",
+      "Brightness vs target, residual grain (Immerkær σ), blown-out pixels, colour (cast + oversaturation), detail and JPEG artefacts form a weighted penalty. PSNR, SSIM and LPIPS need a ground-truth photo, so they are reported on benchmark datasets (Benchmarks page).",
       "Results → checks → recommendation", "quality"],
   ];
   const fig = (src, title, cap) => `<figure style="margin:0 0 12px"><img src="${src}" alt="${esc(title)}" style="width:100%;height:auto;border-radius:16px;display:block;margin-bottom:6px"><p class="note"><b>${esc(title)}</b>${cap ? ` — ${esc(cap)}` : ""}</p></figure>`;
@@ -317,7 +334,7 @@
     }
     if (s[4] === "analysis") { p.innerHTML = "<h4>Computed from your image by the engine</h4><br>" + analysisHTML(res); return; }
     if (s[4] === "quality") {
-      p.innerHTML = `<h4>Checks on your photo’s three outputs</h4><table><tr><th>Method</th><th>Brightness</th><th>Grain σ</th><th>Blown-out</th><th>Penalty</th></tr>${ORDER.map((k) => { const x = res.results[k]; return `<tr><td>${NAME[k]}${res.recommendation.method === k ? '<span class="chip ok">Best</span>' : ""}</td><td>${pct(x.quality.brightness)}</td><td>${fmt(x.quality.noise, 1)}</td><td>${fmt(x.quality.clipped_pct, 2)}%</td><td>${fmt(res.recommendation.scores[k], 2)}</td></tr>`; }).join("")}</table><p class="note">${esc(res.recommendation.why)}</p>`;
+      p.innerHTML = `<h4>Checks on your photo’s three outputs</h4><table><tr><th>Method</th><th>Brightness</th><th>Grain σ</th><th>Blown-out</th><th>Detail</th><th>Penalty</th></tr>${ORDER.map((k) => { const x = res.results[k]; return `<tr><td>${NAME[k]}${res.recommendation.method === k ? '<span class="chip ok">Best</span>' : ""}</td><td>${pct(x.quality.brightness)}</td><td>${fmt(x.quality.noise, 1)}</td><td>${fmt(x.quality.clipped_pct, 2)}%</td><td>${fmt(x.quality.sharpness, 3)}</td><td>${fmt(res.recommendation.scores[k], 2)}</td></tr>`; }).join("")}</table><p class="note">${esc(res.recommendation.why)}</p>`;
       return;
     }
     const byName = Object.fromEntries(res.intermediates.map((i) => [i.name, i]));
@@ -337,7 +354,7 @@
     "Noise reduction": "Residual noise left in the output (Immerkær σ, /255). Lower is better.",
     "Edge preservation": "Correlation of edges with the reference (EPI, 0 to 1). Higher is better.",
   };
-  const PAIRED = ["LOL-v1 eval15", "LOL-v2 real test", "LOL-v2 synthetic test"];
+  const PAIRED = ["LOL-v1 eval15", "LOL-v2 real test (clean subset)", "LOL-v2 synthetic test"];
   const COLORS = { classical: "#ff9e72", dl: "#c93d7a", hybrid: "#6d3fd8" };
   renderBench = async function () {
     const el = $("#bn");
@@ -345,29 +362,35 @@
     catch { el.innerHTML = '<div class="empty"><p>Couldn’t load the benchmark data.</p></div>'; return; }
     const b = E.bench, avg = (m, k) => PAIRED.reduce((s, set) => s + b.main[set][m][k], 0) / PAIRED.length;
     const names = Object.fromEntries(b.methods.map((m) => [m.key, m.name]));
-    const lat = b.latency_ms[names.hybrid], res = current();
+    const lat = b.latency_ms[names.hybrid], res = current(), NP = PAIRED.reduce((s, set) => s + b.n_images[set], 0);
     const cards = [
-      ["PSNR", "Needs ground truth", `${fmt(avg("hybrid", "psnr"), 2)} dB`, "Hybrid, average of 3 unseen paired test sets (215 pairs)."],
-      ["SSIM", "Needs ground truth", fmt(avg("hybrid", "ssim"), 3), "Hybrid, same 215 pairs."],
-      ["LPIPS", "Needs ground truth", fmt(avg("hybrid", "lpips"), 3), "Hybrid, same 215 pairs."],
-      ["NIQE", "No-reference", fmt(avg("hybrid", "niqe"), 2), `Hybrid on the paired sets; ${fmt(b.main["ExDark (real-world, no reference)"].hybrid.niqe, 2)} on 60 real-world ExDark photos.`],
-      ["Processing latency", "Runtime", `${fmt(lat.ms_600x400, 0)} ms`, `Hybrid, 600×400, laptop CPU (${fmt(lat.ms_1280x960 / 1000, 1)} s at 1280×960).${res ? ` This session on the engine: ${res.results.hybrid.ms} ms.` : ""}`],
+      ["PSNR", "Needs ground truth", `${fmt(avg("hybrid", "psnr"), 2)} dB`, `Hybrid, average of 3 unseen paired test sets (${NP} pairs, sets weighted equally).`],
+      ["SSIM", "Needs ground truth", fmt(avg("hybrid", "ssim"), 3), `Hybrid, same ${NP} pairs.`],
+      ["LPIPS", "Needs ground truth", fmt(avg("hybrid", "lpips"), 3), `Hybrid, same ${NP} pairs.`],
+      ["NIQE", "No-reference", fmt(avg("hybrid", "niqe"), 2), `Hybrid on the paired sets; ${fmt(b.main["ExDark (real-world, no reference)"].hybrid.niqe, 2)} on ${b.n_images["ExDark (real-world, no reference)"]} real-world ExDark photos.`],
+      ["Processing latency", "Runtime", `${fmt(lat.ms_600x400, 0)} ms`, `Hybrid, 600×400, laptop CPU (${fmt(lat.ms_1280x960 / 1000, 1)} s at 1280×960${lat.ms_2048x1536_full_size ? `, ${fmt(lat.ms_2048x1536_full_size / 1000, 1)} s for a 2048 px photo returned full size` : ""}).${res ? ` This session on the engine: ${res.results.hybrid.ms} ms.` : ""}`],
       ["Noise reduction", "Derived", fmt(avg("hybrid", "noise"), 2), `Residual σ (hybrid); deep learning only ${fmt(avg("dl", "noise"), 2)}, classical only ${fmt(avg("classical", "noise"), 2)}.`],
-      ["Edge preservation", "Needs ground truth", fmt(avg("hybrid", "epi"), 3), "EPI (hybrid), same 215 pairs."],
+      ["Edge preservation", "Needs ground truth", fmt(avg("hybrid", "epi"), 3), `EPI (hybrid), same ${NP} pairs.`],
     ];
     const ps = ["classical", "dl", "hybrid"].map((k) => avg(k, "psnr")), top = Math.max(...ps) * 1.15;
     const bar = (k, i) => { const v = ps[i], h = (v / top) * 70, x = 62 + i * 75; return `<rect x="${x}" y="${80 - h}" width="26" height="${h}" rx="6" fill="${COLORS[k]}"/><text x="${x + 13}" y="${74 - h}" text-anchor="middle" font-size="10" fill="#2b1a2e">${v.toFixed(2)}</text>`; };
-    const ab = b.ablation, sets = Object.keys(ab), variants = Object.keys(ab[sets[0]]);
+    const ab = b.ablation, sets = Object.keys(ab).filter((s) => ab[s]["Hybrid (full)"].psnr !== undefined), variants = Object.keys(ab[sets[0]]);
+    const BEFORE = "previous pipeline (before quality-aware update)", baSets = Object.keys(ab).filter((s) => ab[s][BEFORE]);
+    const baCell = (v, k, d) => (v[k] === undefined ? "—" : fmt(v[k], d));
     const pairedTable = (set) => `<table><tr><th>Method</th><th>PSNR ↑</th><th>SSIM ↑</th><th>LPIPS ↓</th><th>NIQE ↓</th><th>ms</th></tr>${b.methods.map((m) => { const r = b.main[set][m.key]; return `<tr><td>${esc(m.name)}</td><td>${fmt(r.psnr, 2)}</td><td>${fmt(r.ssim, 3)}</td><td>${fmt(r.lpips, 3)}</td><td>${fmt(r.niqe, 2)}</td><td>${fmt(b.latency_ms[m.name]?.ms_600x400, 0)}</td></tr>`; }).join("")}</table>`;
     const ex = "ExDark (real-world, no reference)", conds = Object.keys(b.robustness);
     el.innerHTML = `<p class="lg"><b>Data status</b><span><span class="chip ok">Actual</span> measured on unseen test images (results/metrics.json)</span><span><span class="chip un">Unavailable</span> metric needs a reference that doesn't exist</span></p>
       <div class="bg">${cards.map(([n, t, v, note]) => `<div class="card lift"><div class="mrow"><span class="tag">${t}</span><span class="chip ok">Actual</span></div><h4 style="margin-top:10px;font-weight:500" data-tip="${esc(BT[n])}" tabindex="0">${n}</h4><div class="v">${v}</div><p class="note">${esc(note)}</p></div>`).join("")}</div>
       <div class="g3" style="grid-template-columns:repeat(auto-fit,minmax(300px,1fr))">
-        <div class="card"><h4 style="font-weight:500">Classical vs Deep vs Hybrid</h4><svg viewBox="0 0 300 100" width="100%" role="img" aria-label="Average PSNR: ${["classical", "dl", "hybrid"].map((k, i) => `${names[k]} ${ps[i].toFixed(2)} dB`).join(", ")}"><path d="M30 80H270" stroke="#f0e4ee"/>${["classical", "dl", "hybrid"].map(bar).join("")}<text x="150" y="96" text-anchor="middle" font-size="9" fill="#7b6670">Average PSNR (dB), 215 unseen pairs</text></svg>
+        <div class="card"><h4 style="font-weight:500">Classical vs Deep vs Hybrid</h4><svg viewBox="0 0 300 100" width="100%" role="img" aria-label="Average PSNR: ${["classical", "dl", "hybrid"].map((k, i) => `${names[k]} ${ps[i].toFixed(2)} dB`).join(", ")}"><path d="M30 80H270" stroke="#f0e4ee"/>${["classical", "dl", "hybrid"].map(bar).join("")}<text x="150" y="96" text-anchor="middle" font-size="9" fill="#7b6670">Average PSNR (dB), ${NP} unseen pairs</text></svg>
           <p class="lg"><span><i style="background:#ff9e72"></i>Classical CV</span><span><i style="background:#c93d7a"></i>Deep Learning</span><span><i style="background:#6d3fd8"></i>Hybrid</span></p>
           <p class="note">Hybrid also leads on SSIM (${fmt(avg("hybrid", "ssim"), 3)} vs ${fmt(avg("dl", "ssim"), 3)} / ${fmt(avg("classical", "ssim"), 3)}). It is <b>not</b> best on every set: on LOL-v2 synthetic, deep learning alone wins.</p></div>
-        <div class="card"><h4 style="font-weight:500">Ablation study</h4><table><tr><th>Configuration</th>${sets.map((s) => `<th>${esc(s.replace(" test", ""))} PSNR</th><th>SSIM</th>`).join("")}</tr>${variants.map((v) => `<tr><td>${esc(v)}</td>${sets.map((s) => `<td>${fmt(ab[s][v].psnr, 2)}</td><td>${fmt(ab[s][v].ssim, 3)}</td>`).join("")}</tr>`).join("")}</table><p class="note">Each row removes one component from the hybrid. Removing the deep-learning restoration costs the most.</p></div>
+        <div class="card"><h4 style="font-weight:500">Ablation study</h4><table><tr><th>Configuration</th>${sets.map((s) => `<th>${esc(s.replace(" test", ""))} PSNR</th><th>SSIM</th>`).join("")}</tr>${variants.map((v) => `<tr><td>${esc(v)}</td>${sets.map((s) => `<td>${fmt(ab[s][v].psnr, 2)}</td><td>${fmt(ab[s][v].ssim, 3)}</td>`).join("")}</tr>`).join("")}</table><p class="note">Each row removes one component from the hybrid (the last row is the whole pipeline before the image-quality-aware update).</p></div>
       </div>
+      ${baSets.length ? `<div class="g3" style="grid-template-columns:repeat(auto-fit,minmax(300px,1fr));margin-top:16px">
+        <div class="card"><h4 style="font-weight:500">Image-quality-aware update: before → after</h4><table><tr><th>Test set</th><th></th><th>PSNR</th><th>SSIM</th><th>LPIPS</th><th>NIQE</th><th>Blockiness</th></tr>${baSets.map((s) => [["before", ab[s][BEFORE]], ["after", ab[s]["Hybrid (full)"]]].map(([l, v]) => `<tr><td>${l === "before" ? esc(s.replace(" test", "").replace(" (real-world, no reference)", "")) : ""}</td><td>${l}</td><td>${baCell(v, "psnr", 2)}</td><td>${baCell(v, "ssim", 3)}</td><td>${baCell(v, "lpips", 3)}</td><td>${baCell(v, "niqe", 2)}</td><td>${baCell(v, "blockiness", 2)}</td></tr>`).join("")).join("")}</table><p class="note">Hybrid on unseen test sets. ExDark has no reference, so only no-reference checks apply there.</p></div>
+        ${b.auto && b.auto[PAIRED[0]] ? `<div class="card"><h4 style="font-weight:500">Auto mode: method chosen per photo</h4><table><tr><th>Test set</th><th>Picks C / DL / H</th><th>Auto PSNR</th><th>Always hybrid</th><th>Oracle</th></tr>${PAIRED.map((s) => { const a = b.auto[s]; return `<tr><td>${esc(s.replace(" test", ""))}</td><td>${["classical", "dl", "hybrid"].map((k) => a.picks[k] || 0).join(" / ")}</td><td>${fmt(a.auto.psnr, 2)}</td><td>${fmt(b.main[s].hybrid.psnr, 2)}</td><td>${fmt(a.oracle_best_psnr.psnr, 2)}</td></tr>`; }).join("")}</table><p class="note">Auto uses only no-reference checks (no ground truth); the oracle picks the best PSNR per photo and is shown only as headroom.</p></div>` : ""}
+      </div>` : ""}
       <details class="dt" style="margin-top:16px"><summary>Every test set, method and condition</summary>
         ${PAIRED.map((s) => `<h4 style="font-weight:500;margin:14px 0 6px">${esc(s)} <span class="note">· ${b.n_images[s]} pairs · paired metrics</span></h4>${pairedTable(s)}`).join("")}
         <h4 style="font-weight:500;margin:14px 0 6px">${esc(ex)} <span class="note">· ${b.n_images[ex]} photos · no reference</span></h4><table><tr><th>Method</th><th>NIQE ↓</th><th>Residual σ ↓</th><th>Clipped %</th><th>PSNR / SSIM</th></tr>${b.methods.map((m) => { const r = b.main[ex][m.key]; return `<tr><td>${esc(m.name)}</td><td>${fmt(r.niqe, 2)}</td><td>${fmt(r.noise, 2)}</td><td>${fmt(r.overexposed, 2)}</td><td><span class="chip un">Unavailable</span></td></tr>`; }).join("")}</table>

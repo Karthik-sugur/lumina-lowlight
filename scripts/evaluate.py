@@ -7,6 +7,7 @@ Outputs: results/metrics.json, results/per_image.csv, results/tables.md, results
 Enhanced images are written to $DATA_DIR/outputs (not committed).
 """
 import csv
+import hashlib
 import json
 import os
 import platform
@@ -21,6 +22,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+from lowlight import analysis as A  # noqa: E402
 from lowlight import classical as C  # noqa: E402
 from lowlight import metrics as M  # noqa: E402
 from lowlight import pipeline as P  # noqa: E402
@@ -28,7 +30,13 @@ from lowlight import pipeline as P  # noqa: E402
 DATA = Path(os.environ.get("DATA_DIR", "data"))
 RES, FIG = ROOT / "results", ROOT / "results" / "figures"
 OUTS = DATA / "outputs"
-PAIRED = ["LOL-v1 eval15", "LOL-v2 real test", "LOL-v2 synthetic test"]
+# LOL-v2 real re-packages most of LOL-v1: 86 of its 100 test inputs and 91 of its references are
+# pixel-identical to LOL-v1 our485 images (our training/validation data). Only pairs with neither
+# image in our485 are evaluated, so every test image is genuinely unseen.
+V2R = "LOL-v2 real test (clean subset)"
+PAIRED = ["LOL-v1 eval15", V2R, "LOL-v2 synthetic test"]
+ABL_SETS = ("LOL-v1 eval15", "LOL-v2 synthetic test")  # enough pairs for a stable ablation
+BEFORE = "previous pipeline (before quality-aware update)"  # also run on ExDark (before/after)
 EXDARK = "ExDark (real-world, no reference)"
 ROBUST_METHODS = ["he", "zero_dce_official", "classical", "dl", "hybrid"]
 CONDITIONS = {"exposure x0.5": (0.5, False), "x0.25": (0.25, False), "x0.1": (0.1, False),
@@ -47,12 +55,24 @@ def trim_letterbox(img):
     return img[r[0]:r[-1] + 1, c[0]:c[-1] + 1] if len(r) and len(c) else img
 
 
+def pixel_hash(p):
+    return hashlib.md5(cv2.imread(str(p), cv2.IMREAD_UNCHANGED).tobytes()).hexdigest()
+
+
+def seen_hashes():
+    """Pixel hashes of every LOL-v1 our485 image (training + validation split)."""
+    d = DATA / "lol" / "lol_dataset" / "our485"
+    return {pixel_hash(p) for p in list((d / "low").glob("*.png")) + list((d / "high").glob("*.png"))}
+
+
 def test_sets():
     lol, v2r, v2s = DATA / "lol" / "lol_dataset" / "eval15", DATA / "lolv2_real" / "Test", DATA / "lolv2_synthetic" / "Test"
     ex = sorted(str(p) for p in (DATA / "exdark" / "images" / "ExDark").glob("*/*") if p.suffix.lower() in (".jpg", ".jpeg", ".png"))
+    seen = seen_hashes()
     return {
         "LOL-v1 eval15": [(p, lol / "high" / p.name) for p in sorted((lol / "low").glob("*.png"))],
-        "LOL-v2 real test": [(p, v2r / "GT" / p.name) for p in sorted((v2r / "Input").glob("*.png"))],
+        V2R: [(p, v2r / "GT" / p.name) for p in sorted((v2r / "Input").glob("*.png"))
+              if pixel_hash(p) not in seen and pixel_hash(v2r / "GT" / p.name) not in seen],
         "LOL-v2 synthetic test": [(p, v2s / "GT" / p.name[1:]) for p in sorted((v2s / "Input").glob("*.png"))],
         EXDARK: [(Path(p), None) for p in random.Random(0).sample(ex, 60)],
     }
@@ -95,8 +115,15 @@ def job(task):
         d.mkdir(parents=True, exist_ok=True)
         cv2.imwrite(str(d / (Path(low_p).stem + ".png")), cv2.cvtColor(C.to_u8(out), cv2.COLOR_RGB2BGR))
     m = M.full_reference(out, gt) if gt is not None else {}
+    if gt is not None:  # 1 = as much fine detail as the reference; < 1 softer, > 1 crisper (or noisier)
+        m["detail_ratio"] = A.sharpness_index(out) / max(A.sharpness_index(gt), 1e-6)
+    if kind == "main" and method in ("classical", "dl", "hybrid"):
+        import api
+        m.update({f"q_{k}": float(v) for k, v in api.quality(out).items()})
     if kind != "robust":
         m.update(M.no_reference(out, with_niqe=True) if gt is None else {"niqe": M.niqe(out)})
+    if gt is None:  # what the quality-aware update targets on real-world JPEGs
+        m.update(colourfulness=A.colourfulness(out), blockiness=A.blockiness(out), sharpness=A.sharpness_index(out))
     return dict(kind=kind, set=set_name, image=Path(low_p or gt_p).name, method=method,
                 variant=extra if kind != "robust" else extra[-1], **m)
 
@@ -110,6 +137,31 @@ def mean_rows(rows, keys):
             for k, v in out.items()}
 
 
+def auto_mode(rows):
+    """Auto mode = the API's per-image recommendation from no-reference checks only. Compared with
+    always using one method and with the oracle (best PSNR per image, needs the ground truth)."""
+    import api
+    out = {}
+    for s in {r["set"] for r in rows}:
+        imgs = {}
+        for r in rows:
+            if r["set"] == s and r["method"] in ("classical", "dl", "hybrid"):
+                imgs.setdefault(r["image"], {})[r["method"]] = r
+        picks, chosen, oracle = {}, [], []
+        for by_m in imgs.values():
+            q = {m: {k[2:]: v for k, v in r.items() if k.startswith("q_")} for m, r in by_m.items()}
+            m = api.recommend(q, A.TARGET_BRIGHTNESS)["method"]
+            picks[m] = picks.get(m, 0) + 1
+            chosen.append(by_m[m])
+            if "psnr" in by_m[m]:
+                oracle.append(max(by_m.values(), key=lambda r: r["psnr"]))
+        metrics = [k for k in ("psnr", "ssim", "lpips", "niqe", "noise", "delta_e") if k in chosen[0]]
+        out[s] = {"picks": picks, "auto": {k: float(np.mean([r[k] for r in chosen])) for k in metrics}}
+        if oracle:
+            out[s]["oracle_best_psnr"] = {k: float(np.mean([r[k] for r in oracle])) for k in metrics}
+    return out
+
+
 def latency():
     """Sequential, single process, all threads: what one user of the app experiences."""
     import torch
@@ -117,6 +169,7 @@ def latency():
     cv2.setNumThreads(os.cpu_count())
     imgs = [read(p) for p, _ in test_sets()["LOL-v1 eval15"][:6]]
     big = cv2.resize(imgs[0], (1280, 960), interpolation=cv2.INTER_CUBIC)
+    huge = cv2.resize(imgs[0], (2048, 1536), interpolation=cv2.INTER_CUBIC)
     res = {}
     for name, key in P.METHODS.items():
         P.run(imgs[0], key)  # warm-up (model load)
@@ -127,7 +180,11 @@ def latency():
         t = time.perf_counter()
         for _ in range(3):
             P.run(big, key)
-        res[name] = {"ms_600x400": small, "ms_1280x960": (time.perf_counter() - t) / 3 * 1000}
+        mid = (time.perf_counter() - t) / 3 * 1000
+        t = time.perf_counter()
+        for _ in range(2):
+            P.run_full(huge, key)  # what the app does for a 2048 px upload: enhance at 1280, return 2048
+        res[name] = {"ms_600x400": small, "ms_1280x960": mid, "ms_2048x1536_full_size": (time.perf_counter() - t) / 2 * 1000}
     return res
 
 
@@ -152,10 +209,10 @@ def main():
     for name, flags in P.ABLATIONS.items():
         if "noise_map" in flags and not P.NOMAP_WEIGHTS.exists():
             continue
-        for s in ("LOL-v1 eval15", "LOL-v2 real test"):
+        for s in ABL_SETS + ((EXDARK,) if name in ("Hybrid (full)", BEFORE) else ()):
             for low, gt in sets[s]:
-                tasks.append(("ablation", s, str(low), str(gt), "hybrid", flags, name))
-    robust_gts = random.Random(1).sample([gt for _, gt in sets["LOL-v2 real test"]], 2 if quick else 30)
+                tasks.append(("ablation", s, str(low), str(gt) if gt else None, "hybrid", flags, name))
+    robust_gts = random.Random(1).sample([gt for _, gt in sets["LOL-v2 synthetic test"]], 2 if quick else 30)
     for cname, (k, spot) in CONDITIONS.items():
         for i, gt in enumerate(robust_gts):
             for key in ROBUST_METHODS:
@@ -181,6 +238,7 @@ def main():
         "main": {f"{s}|{m}": v for (s, m), v in mean_rows(by("main"), ["set", "method"]).items()},
         "ablation": {f"{s}|{v_}": v for (s, v_), v in mean_rows(by("ablation"), ["set", "variant"]).items()},
         "robustness": {f"{s}|{m}": v for (s, m), v in mean_rows(by("robust"), ["set", "method"]).items()},
+        "auto": auto_mode(by("main")),
         "latency_ms": latency(),
         "models": model_sizes(),
         "machine": f"{platform.processor() or platform.machine()} ({os.cpu_count()} threads), CPU only",

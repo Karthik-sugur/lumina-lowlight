@@ -39,18 +39,18 @@ Browser ──► Vercel (static: web/index.html, ui.js, lumina.js, config.js)
 
 | Control | Behaviour |
 |---|---|
-| Drag & drop / browse / Replace | JPG, PNG, WebP up to 15 MB; EXIF-orientation aware; downsized to ≤2048 px before upload (the engine processes at ≤1280 px and says so) |
-| Sample photos | 6 real unseen test photos (LOL-v2 test, ExDark) |
+| Drag & drop / browse / Replace | JPG, PNG, WebP up to 15 MB; EXIF-orientation aware; photos over 2048 px are reduced to 2048 px before upload **and the status line says so with both sizes**. The engine enhances at ≤1280 px and returns results at the uploaded size (≤2048 px) with full-size detail transfer; the status line states the processing and output sizes |
+| Sample photos | 6 real unseen test photos (LOL-v2 real clean subset, ExDark) |
 | **Auto Enhance** | resets fine-tuning, Intent = Auto, Brightness = 1.0, runs the engine and shows the **recommended** method |
 | **Restore image** | runs all three pipelines on the engine (one request), shows the selected mode |
 | Mode: Classical / Deep Learning / Hybrid | shows that pipeline's real output; instant after a run |
 | Engine settings: Intent, Brightness | change how the engine restores (re-run with Restore) |
 | Fine-tune sliders (exposure, contrast, saturation, denoising, sharpness) | the teammate's adjustments, applied **in the browser on top of the engine result**; all at 0 = the engine's exact output |
-| Analysis tab | engine measurements (brightness, near-black %, sensor noise, grain after brightening, lighting spread, colour cast, contrast, recoverability, what we noticed / did) + the quick in-browser estimate |
+| Analysis tab | **Image quality diagnostics** (Illumination Low/Medium/High (+ uneven), Noise Low/Medium/High, Sharpness Soft/Balanced/Sharp, Colour quality, Compression, Resolution, Recoverability), each with the measured value behind the label; **Enhancement breakdown** (detected cases such as *Extremely dark*, *Uneven illumination*, *Compressed (JPEG blocks)*, *Soft / blurry*, and every stage's decision for this photo with the reason); then the raw measurements, what we noticed / did and the quick in-browser estimate |
 | Download | PNG of the displayed result (`lumina-<method>.png`, `-finetuned` when adjusted) |
 | Zoom − / + / Fit, before–after divider | unchanged teammate behaviour |
-| Comparison Lab | Original + 3 methods with synced zoom, no-reference metrics, time per method, recommendation with its formula, a download per pane |
-| Technology | 7 stages, each with this photo's real intermediate output (illumination map, reflectance, Retinex gain, candidates, curve strength, fusion weights, noise map, removed noise, quality checks) |
+| Comparison Lab | Original + 3 methods with synced zoom, no-reference metrics (brightness, grain, blown-out, colour cast, detail, colourfulness, blockiness), time per method, recommendation with its full formula, a download per pane |
+| Technology | 7 stages, each with this photo's real intermediate output (illumination map, reflectance, Retinex gain, candidates, curve strength, fusion weights, noise map, removed noise, recovered detail, quality checks) |
 | Benchmarks | the evaluation's numbers (`results/metrics.json` → `web/benchmarks.json` via `scripts/export_web_data.py`) |
 
 Metrics on a user's photo are **no-reference** checks; PSNR, SSIM and LPIPS need a ground-truth image, so they appear only on Benchmarks (measured on reference datasets).
@@ -60,7 +60,7 @@ Metrics on a user's photo are **no-reference** checks; PSNR, SSIM and LPIPS need
 - **No secrets in the frontend.** The engine API is public, stateless and stores nothing. `config.js` holds only the public engine URL, injected at build time from `LUMINA_API_BASE` (`web/build.mjs`); there is no localhost default.
 - **CORS:** the Space answers cross-origin requests with the caller's origin. `api.py` also supports an optional `ALLOWED_ORIGINS` allow-list (with wildcards, e.g. `https://*.vercel.app`); it is unset, because there are no cookies or credentials to protect.
 - **Headers** (`web/vercel.json`): Content-Security-Policy (scripts only from the site; network only to the site and `*.hf.space`; no framing), `nosniff`, `Referrer-Policy`, `Permissions-Policy`. Vercel adds HSTS.
-- **Sizes and time:** browser limit 15 MB, upload ≤2048 px JPEG, engine limit 15 MB decoded and ≥32 px per side; results are WebP (the response is about 0.35–0.5 MB for a 600×400 photo). The client times out after 120 s (covers a cold start of the free Space) with a retry message; stale responses are discarded if a new photo was loaded.
+- **Sizes and time:** browser limit 15 MB, upload ≤2048 px JPEG, engine limit 15 MB decoded and ≥32 px per side (it also caps at 2048 px and says so); results are WebP at the uploaded size (about 0.35–0.5 MB for a 600×400 photo, more for 2048 px). The client times out after 120 s (covers a cold start of the free Space) with a retry message; stale responses are discarded if a new photo was loaded.
 
 ## Run locally
 
