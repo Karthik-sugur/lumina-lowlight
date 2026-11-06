@@ -244,8 +244,8 @@ def strategy(d, p, f):
                         "only detail above the noise floor is kept, and a halo guard limits overshoot"))
         else:
             ops.append(("Detail recovery", "skipped", "already sharp, or too noisy to sharpen safely"))
-    ops.append(("Colour", f"white balance {p.wb_strength * 100:.0f}%, saturation ×{p.saturation:.2f}" + (", capped at a natural level" if q else ""),
-                "fix casts without over-saturating"))
+    ops.append(("Colour", f"white balance {p.wb_strength * 100:.0f}%, saturation ×{p.saturation:.2f}",
+                "fix casts without over-saturating; colour noise is removed before brightening (JPEGs) and by restoration"))
     return {"cases": cases or ["Moderately dark"], "operations": [{"stage": a, "decision": b, "why": c} for a, b, c in ops]}
 
 

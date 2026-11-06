@@ -33,7 +33,7 @@ flowchart TD
     end
 
     subgraph S4["④ Contrast & colour (classical.py)"]
-        CL["clahe (Lab L, 16-bit)"] --> CC["colour_correct<br/>partial gray-world + saturation"] --> LS["limit_saturation<br/>natural colourfulness ceiling"]
+        CL["clahe (Lab L, 16-bit)"] --> CC["colour_correct<br/>partial gray-world + saturation"]
     end
 
     subgraph S5["⑤ DL restoration (lowlight/restore.py)"]
@@ -47,7 +47,7 @@ flowchart TD
     RX --> FW
     QA --> FW
     HG --> CL
-    LS --> RN
+    CC --> RN
     HG --> NM
     RN --> DR["⑥ detail_stage → recover_detail<br/>re-inject above-noise detail, 2-scale guided USM,<br/>halo clamp; strengths from residual noise + sharpness"]
     DR --> UI["adjust_exposure (user intent)"]
@@ -65,7 +65,7 @@ flowchart TD
 | Histogram equalisation (baseline) | `classical.histogram_equalize` |
 | CLAHE only (baseline) | `classical.clahe` |
 | Zero-DCE++ official (baseline) | published weights, no fine-tuning |
-| **Classical only** | ① (+ pre-denoise) → Retinex → highlight guard → gain-aware bilateral + guided denoise → ④ → ⑥ adaptive detail recovery |
+| **Classical only** | ① (+ pre-denoise) → Retinex → highlight guard → gain-aware bilateral + guided denoise → ④ + `limit_saturation` (colourfulness ceiling, after denoising) → ⑥ adaptive detail recovery |
 | **Deep learning only** | fine-tuned Zero-DCE++ alone |
 | **Hybrid** | ① → ② → ③ → ④ → ⑤ → ⑥ (diagram above); every method gets ⑦ when the photo is larger than 1280 px |
 

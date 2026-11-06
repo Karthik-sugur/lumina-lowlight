@@ -295,7 +295,7 @@
   /* ---------- Technology: the seven stages with this photo's real intermediate outputs ---------- */
   const STAGES = [
     ["Image analysis", "Measures brightness, noise, sharpness, colour, compression and lighting so every later stage adapts to this photo.",
-      "Luminance statistics; Immerkær noise estimate (σ in /255 units); lighting spread = p90 − p10 of log₂ illumination (stops); colour cast = chroma of the mean mid-tone colour in Lab; colourfulness = chroma ÷ lightness; sharpness = exposure-normalised Laplacian energy; JPEG blockiness = 8-px grid step energy. These set the brightness target, gain limit, pre-denoising, CLAHE, white balance, saturation ceiling and detail recovery.",
+      "Luminance statistics; Immerkær noise estimate (σ in /255 units); lighting spread = p90 − p10 of log₂ illumination (stops); colour cast = chroma of the mean mid-tone colour in Lab; colourfulness = chroma ÷ lightness; sharpness = exposure-normalised Laplacian energy; JPEG blockiness = 8-px grid step energy. These set the brightness target, gain limit, pre-denoising, CLAHE, white balance, the classical path's saturation ceiling and detail recovery.",
       "RGB image → diagnosis → adaptive parameters", "analysis"],
     ["Illumination estimation", "Finds how much light reached each part of the scene, so dark regions can be lifted without blowing out bright ones.",
       "T = max(R, G, B), refined with an edge-aware guided filter in √-space (radius 1.5% of the image size), so the map is smooth inside regions but follows object edges, which prevents halos.",

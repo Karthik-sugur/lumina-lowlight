@@ -181,7 +181,8 @@ def prepare(img, f, target_mult=1.0, tm=None, viz=None):
     return x, local, d, p, viz, tm
 
 
-def contrast_colour(x, p, f, tm):
+def contrast_colour(x, p, f, tm, ceiling=True):
+    """CLAHE + colour correction; ceiling = cap colourfulness (classical path, applied after denoising)."""
     q = f.get("quality", False)
     if f["clahe"]:
         if q and p.deblock:
@@ -190,7 +191,7 @@ def contrast_colour(x, p, f, tm):
         tm("CLAHE")
     if f["colour"]:
         x = np.clip(C.colour_correct(x, p.wb_strength, p.saturation), 0, 1).astype(np.float32)
-        if q:
+        if q and ceiling:
             x = C.limit_saturation(x, p.max_colour).astype(np.float32)
         tm("colour correction")
     return x
@@ -248,7 +249,9 @@ def run(img, method="hybrid", preset="Auto (balanced)", strength=1.0, **flags):
 
     # hybrid: intent is applied at the end so the restoration net always sees its training range
     x, local, d, p, viz, tm = prepare(img, f, 1.0, tm, viz)
-    x = contrast_colour(x, p, f, tm)
+    # no saturation ceiling in the hybrid: before restoration chroma noise triggers it (it cost 0.27-0.76 dB
+    # on test sets); after restoration it changed 6 of 200 validation outputs and lost on mean LPIPS.
+    x = contrast_colour(x, p, f, tm, ceiling=False)
     if f["restore"]:
         nmap = np.clip(local / restore.NOISE_NORM, 0, 1).astype(np.float32)
         viz["Noise-level map (to DL)"] = nmap

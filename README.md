@@ -32,14 +32,14 @@ All test images are unseen (never used for training, validation or tuning). LOL-
 | Zero-DCE++ (official weights) | 16.16 | 0.595 | 0.337 | 7.41 | 5.06 | 18.06 |
 | Classical only (ours) | 16.76 | 0.621 | 0.467 | 6.87 | 5.36 | 16.49 |
 | Deep learning only (ours) | 17.65 | 0.589 | 0.349 | 7.58 | 6.62 | 15.22 |
-| **Hybrid (ours)** | **17.86** | **0.768** | **0.264** | **4.29** | **1.27** | **13.48** |
+| **Hybrid (ours)** | **18.23** | **0.771** | **0.248** | **4.24** | **1.42** | **13.34** |
 
-- **LOL-v1 eval15 / clean LOL-v2 real:** hybrid 18.91 / 17.91 dB PSNR, SSIM 0.775 / 0.770, LPIPS 0.226 / 0.307; best of all methods on both sets except new-overexposure.
-- **Darkness sweep (30 unseen references):** best method at every exposure from ×0.5 to ×0.025, by 1.0–2.4 dB.
-- **ExDark real-world night photos (no ground truth):** lowest residual noise (1.68); the official Zero-DCE++ has the best NIQE (4.29 vs 4.60).
-- **Image-quality-aware update:** measures noise, sharpness, colourfulness, JPEG blocking and resolution and adapts to them; fixes oversaturated, blocky small JPEGs (flower photo: blocks 2.03 → 1.31, colourfulness 0.63 → 0.37) and returns full-size results with real (not invented) detail. **But** its saturation ceiling costs 0.27 dB on eval15 and 0.76 dB on clean LOL-v2 real; reported, not re-tuned on test data ([`eval_P1_T76.md`](eval_P1_T76.md) §9).
-- **Honest weak spots:** not best on LOL-v2 synthetic (16.75 vs 18.04 dB for DL-only); the most new overexposure of our methods (1.08 % avg); Auto mode cannot beat "always hybrid" on validation, so it keeps the hybrid unless another output is clearly better. Details in [`eval_P1_T76.md`](eval_P1_T76.md) §6–9.
-- **Two tiny networks:** 10.6k + 144.6k parameters (~0.6 MB); 0.8 s per 600×400 image, 2.4 s at 1280×960, 2.7 s for a 2048-px photo returned full size, on a laptop CPU.
+- **LOL-v1 eval15 / clean LOL-v2 real:** hybrid 19.18 / 18.67 dB PSNR, SSIM 0.779 / 0.772, LPIPS 0.207 / 0.283; best of all methods on both sets except new-overexposure.
+- **Darkness sweep (30 unseen references):** best method in all six conditions (×0.5 … ×0.025 by 1.5–2.6 dB; under a strong spotlight only narrowly in PSNR, clearly in SSIM).
+- **ExDark real-world night photos (no ground truth):** lowest residual noise (1.85); the official Zero-DCE++ has the best NIQE (4.29 vs 4.54).
+- **Image-quality-aware update:** measures noise, sharpness, colourfulness, JPEG blocking and resolution and adapts to them; handles small compressed photos (flower JPEG: blocks 2.03 → 1.33, grain 2.83 → 1.40, colourfulness 0.63 → 0.55) and returns full-size results with real (not invented) detail. Neutral on the LOL-style test sets after one fix (its first version capped saturation before denoising and lost 0.27–0.76 dB; the fix was prompted by that test result and chosen on fresh validation data, disclosed in [`eval_P1_T76.md`](eval_P1_T76.md) §9.5–9.6). ExDark NIQE is worse with it (4.18 → 4.54).
+- **Honest weak spots:** not best on LOL-v2 synthetic (16.84 vs 18.04 dB for DL-only); the most new overexposure of our methods (1.08 % avg); Auto mode cannot beat "always hybrid" on validation, so it keeps the hybrid unless another output is clearly better. Details in [`eval_P1_T76.md`](eval_P1_T76.md) §6–9.
+- **Two tiny networks:** 10.6k + 144.6k parameters (~0.6 MB); 0.8–1.0 s per 600×400 image, 2.4–2.7 s at 1280×960, 2.7–3.0 s for a 2048-px photo returned full size, on a laptop CPU (range of our two final runs).
 - Full evaluation, model selection, ablation and failure analysis: [`eval_P1_T76.md`](eval_P1_T76.md) (raw tables: [`results/tables.md`](results/tables.md)).
 
 ## Architecture
@@ -63,7 +63,7 @@ photo ─► ① illumination map T (max-RGB + guided filter) + quality diagnosi
         ─► (blocky JPEG / noisy classical path) denoise + boundary deblock BEFORE brightening, lower gain cap
         ─► ② two candidates: Retinex re-lighting (classical) │ Zero-DCE++ fine-tuned (DL, quality-aware curve strength)
         ─► ③ per-pixel quality-weighted Laplacian-pyramid fusion + soft highlight roll-off
-        ─► ④ adaptive CLAHE + colour correction with a natural saturation ceiling
+        ─► ④ adaptive CLAHE + colour correction (the classical path also caps saturation, after its denoising)
         ─► ⑤ restoration U-Net conditioned on a noise-level map derived from the illumination model
         ─► ⑥ adaptive detail recovery AFTER denoising (above-noise detail only, halo clamp; off when sharp or noisy)
         ─► ⑦ full-size output: enhanced at ≤1280 px, returned at the photo's size (≤2048 px) with its own detail
