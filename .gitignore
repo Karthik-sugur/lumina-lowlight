@@ -1,0 +1,32 @@
+# datasets / caches (download with scripts/download_data.py)
+data/
+*.npz
+
+# python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+.venv/
+venv/
+env/
+
+# logs / console output / temp
+*.out
+*.err
+*.log
+*.tmp
+
+# secrets & local config
+.env
+.env.*
+*.token
+.huggingface/
+.claude/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/

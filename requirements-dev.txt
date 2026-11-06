@@ -1,0 +1,6 @@
+# Training + evaluation extras (not needed to run the app)
+-r requirements.txt
+torch>=2.4
+pyiqa>=0.1.13          # LPIPS + NIQE
+matplotlib>=3.8
+huggingface_hub>=0.24  # dataset download
