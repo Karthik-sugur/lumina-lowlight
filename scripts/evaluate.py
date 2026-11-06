@@ -105,7 +105,7 @@ def mean_rows(rows, keys):
     out = {}
     for r in rows:
         out.setdefault(tuple(r[k] for k in keys), []).append(r)
-    metrics = [k for k in rows[0] if isinstance(rows[0][k], float)]
+    metrics = sorted({k for r in rows for k, v in r.items() if isinstance(v, float)})  # union: sets differ
     return {k: {m: float(np.mean([r[m] for r in v if m in r])) for m in metrics if any(m in r for r in v)}
             for k, v in out.items()}
 

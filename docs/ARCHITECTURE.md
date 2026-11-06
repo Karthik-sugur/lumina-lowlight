@@ -72,7 +72,7 @@ flowchart LR
     DL[scripts/download_data.py] --> LOL[(LOL our485)]
     LOL -->|seeded split 435/50| TD[scripts/train_dce.py<br/>Zero-DCE++ fine-tune]
     TD --> W1[weights/dce_finetuned.pth]
-    W1 --> TR[scripts/train_restore.py<br/>inputs = pipeline.prepare]
+    W1 --> TR[scripts/train_restore.py<br/>inputs = pipeline.prepare<br/>LOL pairs + synthetic dark pairs]
     LOL --> TR
     TR --> W2[weights/restore_net.pth<br/>+ restore_net_nomap.pth for ablation]
     W1 & W2 --> EV[scripts/evaluate.py]

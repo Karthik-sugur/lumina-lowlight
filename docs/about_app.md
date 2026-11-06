@@ -25,8 +25,8 @@ Photos are processed in memory on the server. Temporary copies the web framework
 ## Limitations (known failure modes)
 - **Almost no light = almost no information.** In near-black regions the result can be smudgy or grainy. No method can recover what the sensor never captured.
 - **Coloured lighting is ambiguous.** A sodium-orange street or neon sign can be "colour cast" or "the real colour". We detect coloured light sources and back off white balance, but we sometimes guess wrong.
-- **Blown-out lamps stay blown out.** Pixels that were already pure white carry no detail to recover; we prevent *new* clipping but can't undo old clipping.
-- **Training data bias.** The networks were fine-tuned on LOL (indoor scenes, one camera type). Outdoor and phone photos are handled mostly by the adaptive classical stages, and quality can vary there.
+- **Blown-out lamps stay blown out.** Pixels that were already pure white carry no detail to recover. We try to limit *new* clipping, but it is our weakest measured point (about 1 % of pixels on average, more on bright scenes).
+- **Training data bias.** The networks were trained on LOL (indoor scenes, one camera type) plus synthetic sensor noise. Heavily compressed or video-frame noise is outside what they learned and can remain as coloured grain.
 - **Heavy JPEG compression** in the dark shows up as blocky artefacts once brightened.
 
 ## Responsible use

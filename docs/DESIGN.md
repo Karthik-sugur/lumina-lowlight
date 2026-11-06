@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Problem | P1: Robust Low-Light Image Restoration and Enhancement |
-| Team | TXX (see `eval_P1_TXX.md` for USNs) |
+| Team | T76: Indhu S, Karthikeya D S, Dheeraj Chinta, Darsh Chandran |
 | Live app | see README |
 | Status | Complete: all mandatory and advanced requirements implemented and evaluated |
 
@@ -58,7 +58,7 @@ Photos taken in the dark are underexposed, noisy and colour-shifted. Naive brigh
 | **Adv 4. Overexposure, colour shift, detail loss** | `protect_highlights`, gain cap, coloured-light-aware WB; measured by new-overexposure %, ΔE2000, EPI | eval file columns |
 | **Adv 5. Unseen images** | All test sets disjoint from training/tuning; app examples from test sets | eval file |
 | Metrics: PSNR, SSIM, LPIPS, NIQE, latency, noise and edges | `lowlight/metrics.py`, `scripts/evaluate.py` | eval file |
-| Deliverable: deployed app, comparative eval, intermediate visualisations, failure analysis | `app.py`, `Dockerfile`, `eval_P1_TXX.md`, `results/failures/` | live URL |
+| Deliverable: deployed app, comparative eval, intermediate visualisations, failure analysis | `app.py`, `Dockerfile`, `eval_P1_T76.md`, `results/failures/` | live URL |
 
 ## 4. Data
 
@@ -115,7 +115,7 @@ There is no leakage: the test sets are never read by `train_dce.py`, `train_rest
 - **Input-domain noise estimate for the map:** under-estimates noise in 8-bit/JPEG dark images (e.g. σ = 0.6 on a visibly grainy ExDark photo). Replaced by measuring on the brightened image.
 - **NLM denoising (classical path):** slower and no better than two bilateral passes on the training split.
 - **Curve-strength grid ×0.5–×2.0:** moderately dark inputs always picked the lower bound (×0.5) and were still over-brightened. A search pinned to its boundary means the range was too narrow, so it was widened to ×0.1–×2.0.
-- **"Exposure lock"** (forcing the restorer to keep the input's mean brightness): it helped on LOL-v2-derived data, whose references are darker (mean 0.39) than LOL's (0.456). On our **validation** split it *cost* 0.6 dB, so we rejected it. Its apparent benefit was a dataset brightness convention, not robustness. (How we found this: a test-time robustness sweep exposed a weakness; every candidate fix was then decided on the validation split only, so test data never selected a design.)
+- **"Exposure lock"** (forcing the restorer to keep the input's mean brightness): it helped on LOL-v2-derived data, whose references are darker (mean luma 0.371) than LOL's (0.453 test, 0.456 train). On our **validation** split it *cost* 0.6 dB, so we rejected it. Its apparent benefit was a dataset brightness convention, not robustness. (How we found this: a test-time robustness sweep exposed a weakness; every candidate fix was then decided on the validation split only, so test data never selected a design.)
 
 ## 6. Evaluation methodology
 - **Paired sets:** PSNR, SSIM (Gaussian 11×11, σ=1.5, RGB), LPIPS (AlexNet, pyiqa), NIQE (pyiqa), residual noise σ (Immerkær), edge preservation index (Laplacian correlation with ground truth), CIEDE2000 colour shift, newly over-exposed pixel %, brightness error.
@@ -124,7 +124,11 @@ There is no leakage: the test sets are never read by `train_dce.py`, `train_rest
 - **Latency:** sequential single process, after warm-up, mean of 6 LOL images (600×400) and 3 runs at 1280×960, laptop CPU (no GPU).
 - **Ablation:** hybrid with one component removed, on LOL-v1 eval15 + LOL-v2 real.
 
-Results, ablation and failure analysis: **[`eval_P1_TXX.md`](../eval_P1_TXX.md)**.
+Results, ablation and failure analysis: **[`eval_P1_T76.md`](../eval_P1_T76.md)**. Headline (test sets, hybrid): 18.41 dB / 0.781 SSIM / 0.227 LPIPS / 4.16 NIQE averaged over 215 unseen pairs (best of six methods on 7 of 8 metrics); best NIQE on ExDark; best from ×0.25 to ×0.025 exposure.
+
+**Model selection (validation only).** Restorer v2 (LOL pairs only) vs v3 (LOL + synthetic pairs), full pipeline, 50 held-out real pairs + their synthetic degradations: v2 19.65 / 17.54 dB (real / synthetic), v3 19.41 / 19.90 dB. **v3 selected**: −0.24 dB on real, +2.36 dB on synthetic, real/synthetic gap 0.49 vs 2.11 dB. On the test sets (seen only afterwards) v3 gained on LOL-v1 (+0.62 dB) and extreme darkness, but lost 0.94 dB on LOL-v2 real; reported, not re-selected.
+
+**Noise-map conditioning, honestly:** it helps on real captures (+0.25 dB v2, +0.20 dB v3 on validation), hurts on synthetic noise (−1.48 / −0.21 dB), and is a tie overall for v3 (19.65 vs 19.66). It is a small, real-data-specific benefit.
 
 ## 7. Deployment and reproducibility
 - `docker build -t lumina . && docker run -p 7860:7860 lumina`, or `pip install -r requirements.txt torch && python app.py`.
@@ -134,7 +138,7 @@ Results, ablation and failure analysis: **[`eval_P1_TXX.md`](../eval_P1_TXX.md)*
 - No secrets anywhere: the app needs no API keys.
 
 ## 8. Limitations
-See also *About* in the app. In short: (1) no method recovers detail below the noise floor, and near-black regions stay soft; (2) coloured lighting vs colour cast is ambiguous; (3) already-clipped highlights can't be recovered; (4) the networks were trained on LOL (indoor, one sensor family) and outdoor scenes rely more on the classical stages; (5) heavy JPEG blocking is amplified; (6) PSNR and SSIM reward matching LOL's particular exposure, which isn't necessarily what a user wants (hence presets).
+See also *About* in the app. In short: (1) no method recovers detail below the noise floor, and near-black regions stay soft; (2) coloured lighting vs colour cast is ambiguous; (3) already-clipped highlights can't be recovered; (4) the restorer was trained on LOL (indoor, one sensor family) plus synthetic sensor noise; compressed/correlated noise (video frames, heavy JPEG) is outside its training distribution; (5) heavy JPEG blocking is amplified; (6) PSNR and SSIM reward matching a dataset's exposure convention (our three worst LOL-v2 cases gain ~9 dB from one global brightness gain), which isn't necessarily what a user wants (hence presets); (7) highlight protection runs before the restorer, which can re-clip highlights; the ablation shows it has no measurable effect, so overexposure (1.08 % new clipped pixels on average) is our weakest metric.
 
 ## 9. Ethics and responsible use
 - **No hallucination by design:** brightening is pixel-wise and monotone; restoration is a residual correction conditioned on measured noise, with no generative prior.
@@ -144,12 +148,12 @@ See also *About* in the app. In short: (1) no method recovers detail below the n
 - **Accessibility and inclusion:** mobile-first, colour-blind-safe visuals, plain-language explanations.
 
 ## 10. Team roles
-| Member | Area |
-|---|---|
-| Member 1 | Classical pipeline (illumination, Retinex, CLAHE, denoising, colour), adaptive parameters |
-| Member 2 | Deep learning: Zero-DCE++ fine-tuning, restoration U-Net, training |
-| Member 3 | Hybrid fusion, evaluation, ablation, failure analysis |
-| Member 4 | App/UX, deployment, documentation |
+| Member | USN | Area |
+|---|---|---|
+| Indhu S | 1RUA24CSE0170 | Classical pipeline (illumination, Retinex, CLAHE, denoising, colour), adaptive parameters |
+| Karthikeya D S | 1RUA24CSE0195 | Deep learning: Zero-DCE++ fine-tuning, restoration U-Net, training |
+| Dheeraj Chinta | 1RUA24CSE0127 | Hybrid fusion, evaluation, ablation, failure analysis |
+| Darsh Chandran | 1RUA24CSE0115 | App/UX, deployment, documentation |
 
 ## 11. Future work
 Fine-tune the restorer on more diverse real data (e.g. SID sRGB, phone captures); a learned recoverability/uncertainty map; tiled processing for full-resolution phone images; on-device (ONNX/TFLite) export. Together the two networks are about 155k parameters, which makes on-device use realistic.

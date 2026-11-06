@@ -17,7 +17,7 @@ short_description: Adaptive hybrid (classical + DL) low-light image restoration
 
 > *See what the dark hid, without inventing what wasn't there.*
 
-**Live app:** https://darshuuuu-lumina-lowlight.hf.space  ·  **Code:** https://github.com/darshchandran/lumina-lowlight  ·  **Evaluation:** [`eval_P1_TXX.md`](eval_P1_TXX.md)  ·  **Design doc:** [`docs/DESIGN.md`](docs/DESIGN.md)  ·  **Architecture:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+**Live app:** https://darshuuuu-lumina-lowlight.hf.space  ·  **Code:** https://github.com/darshchandran/lumina-lowlight  ·  **Evaluation:** [`eval_P1_T76.md`](eval_P1_T76.md)  ·  **Design doc:** [`docs/DESIGN.md`](docs/DESIGN.md)  ·  **Architecture:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 
 Lumina restores dark, noisy, colour-shifted photos with a **hybrid** of classical computer vision and two small neural networks. Every enhancement setting is chosen per image from measurements of that image, and the app explains in plain language what it noticed and what it did.
 
@@ -32,12 +32,14 @@ All test images are unseen (never used for training, validation or tuning). CPU 
 | Zero-DCE++ (official weights) | 17.13 | 0.654 | 0.281 | 6.84 | 5.07 | 16.33 |
 | Classical only (ours) | 16.91 | 0.631 | 0.413 | 6.39 | 5.22 | 15.00 |
 | Deep learning only (ours) | 18.04 | 0.642 | 0.287 | 6.95 | 6.43 | 13.98 |
-| **Hybrid (ours)** | **18.50** | **0.794** | **0.229** | **4.18** | **1.22** | **12.15** |
+| **Hybrid (ours)** | **18.41** | **0.781** | **0.227** | **4.16** | **1.55** | **12.31** |
 
-- **LOL-v2 real (100 unseen pairs):** hybrid 20.11 dB / SSIM 0.822 / LPIPS 0.207, best on every metric.
-- **ExDark real-world night photos (no ground truth):** hybrid has the best NIQE (4.16) and the lowest residual noise.
-- **Two tiny networks:** 10.6k + 144.6k parameters (~0.6 MB); about 0.6 s per 600×400 image on a laptop CPU.
-- Full tables, ablation, robustness sweep and failure analysis: [`results/tables.md`](results/tables.md), [`results/failures/`](results/failures/).
+- **LOL-v1 eval15 / LOL-v2 real:** hybrid 19.18 / 19.17 dB PSNR, SSIM 0.779 / 0.800, LPIPS 0.206 / 0.223; best of all methods on both sets except new-overexposure.
+- **Darkness sweep:** best method from ×0.25 down to ×0.025 exposure (23.09 dB at ×0.025, vs 19.75 for classical-only).
+- **ExDark real-world night photos (no ground truth):** best NIQE (4.18) and lowest residual noise (2.10).
+- **Honest weak spots:** not best on LOL-v2 synthetic (16.88 vs 18.04 dB for DL-only); the most new overexposure of our methods (1.08 % avg); noise-map conditioning is only a small, real-data-specific gain. Details in [`eval_P1_T76.md`](eval_P1_T76.md) §6–8.
+- **Two tiny networks:** 10.6k + 144.6k parameters (~0.6 MB); 0.8 s per 600×400 image and 1.9 s at 1280×960 on a laptop CPU.
+- Full evaluation, model selection, ablation and failure analysis: [`eval_P1_T76.md`](eval_P1_T76.md) (raw tables: [`results/tables.md`](results/tables.md)).
 
 ## How it works
 
@@ -61,7 +63,7 @@ Full diagram with function names: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 | Deep model (Zero-DCE++), fine-tuned | `lowlight/dce.py`, `scripts/train_dce.py` |
 | DL restoration conditioned on classical illumination | `lowlight/restore.py`, `scripts/train_restore.py`, `pipeline.noise_map` |
 | Adaptive selection / fusion, quality-aware strategy | `pipeline.fusion_weights`, `pyramid_blend`, `choose_dce_scale` |
-| Classical vs DL vs hybrid, ablation, robustness, failures | `scripts/evaluate.py`, `scripts/report.py` → [`eval_P1_TXX.md`](eval_P1_TXX.md) |
+| Classical vs DL vs hybrid, ablation, robustness, failures | `scripts/evaluate.py`, `scripts/report.py` → [`eval_P1_T76.md`](eval_P1_T76.md) |
 
 ## Human-centred design
 
@@ -91,7 +93,7 @@ Open http://localhost:7860. The trained weights (~0.7 MB) are in `weights/`, so 
 pip install -r requirements-dev.txt
 python scripts/download_data.py          # LOL, LOL-v2 test splits, ExDark, Zero-DCE++ weights (~720 MB, to $DATA_DIR or ./data)
 python scripts/train_dce.py              # Zero-DCE++ fine-tune on LOL train split (435/50 seeded split -> results/split.json)
-python scripts/train_restore.py          # restoration U-Net (with noise-level map)
+python scripts/train_restore.py          # restoration U-Net v3 (noise-level map; LOL + synthetic dark pairs)
 python scripts/train_restore.py --no-map # ablation model
 python scripts/evaluate.py               # all methods x all test sets, ablation, robustness, latency (~20 min, 8 cores)
 python scripts/report.py                 # results/tables.md, results/figures/, results/failures/
