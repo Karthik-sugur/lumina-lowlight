@@ -221,8 +221,8 @@ def recover_detail(x, ref, noise_sigma, reinject, fine, mid, ref_sigma=None):
 
     1. Re-injection: detail present in `ref` (the image before noise removal) that noise removal
        took away, but only the part above the noise floor (coring), weighted by `reinject`.
-    2. Two-scale edge-aware unsharp masking: detail layers from guided filters (radius 2 = fine
-       texture, radius 6 = local contrast), each cored, scaled by `fine` / `mid`.
+    2. Two-scale unsharp masking: detail layers against Gaussian blurs (sigma 1 = fine texture,
+       sigma 3 = local contrast), each cored at the residual noise, scaled by `fine` / `mid`.
     3. Halo clamp: the result may not overshoot the 3x3 local min/max of the unsharpened image by
        more than a small margin, which prevents bright/dark rims on high-contrast edges.
     noise_sigma is the residual noise of x, ref_sigma the (per-pixel) noise of ref, both in 0..255
@@ -239,7 +239,9 @@ def recover_detail(x, ref, noise_sigma, reinject, fine, mid, ref_sigma=None):
         y1 = y1 + reinject * (d_ref - d_out) * (np.abs(d_ref) > np.abs(d_out))  # only where detail was lost
     for r, amt in ((2, fine), (6, mid)):
         if amt > 0:
-            y1 = y1 + amt * core(y1 - guided_filter(y1, y1, r, 4e-4), t)
+            # Gaussian base, not an edge-preserving one: an edge-aware base keeps the edges, leaving
+            # nothing to sharpen (validation: blurred inputs changed by 0.07 grey levels on average)
+            y1 = y1 + amt * core(y1 - cv2.GaussianBlur(y1, (0, 0), r / 2), t)
     k = np.ones((3, 3), np.uint8)
     lo, hi = cv2.erode(y, k), cv2.dilate(y, k)
     y1 = np.clip(y1, lo - 0.04, hi + 0.04)

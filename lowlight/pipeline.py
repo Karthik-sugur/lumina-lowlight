@@ -8,7 +8,10 @@ Hybrid:
   4. adaptive CLAHE + colour correction
   5. DL restoration U-Net conditioned on a noise-level map derived from T (where shadows were
      lifted most, noise was amplified most)
-  6. user intent (preset / strength) applied as a final exposure adjustment
+  6. adaptive detail recovery after noise removal (noise-gated re-injection + unsharp masking)
+  7. user intent (preset / strength) applied as a final exposure adjustment
+Image-quality-aware additions: blocky JPEGs are chroma-denoised and deblocked before brightening
+(prepare), and run_full returns the input size with the photo's own above-noise detail.
 Every stage can be switched off with a flag; that is how the ablation study is run.
 """
 import time
@@ -176,6 +179,9 @@ def prepare(img, f, target_mult=1.0, tm=None, viz=None):
     x = np.clip(x, 0, 1).astype(np.float32)
     tm("highlight guard")
     local = noise_map(src, x)
+    if src is not img:  # pre-denoising hides noise the restorer must still remove: read it on the original
+        raw = np.clip(img * (C.luminance(x) / np.maximum(C.luminance(src), 1 / 255))[..., None], 0, 1)
+        local = np.maximum(local, noise_map(img, raw.astype(np.float32)))
     p.denoise_sigma = float(np.percentile(local, 90))
     tm("noise-level map")
     return x, local, d, p, viz, tm

@@ -11,16 +11,18 @@ import numpy as np
 
 from .classical import block_grid, luminance
 
-# Global knobs, tuned on the LOL training split only (scripts/tune.py). Presets scale the target.
+# Global knobs, set from the LOL training split only (target vs the training references' mean
+# brightness 0.456). Presets scale the target.
 TARGET_BRIGHTNESS = 0.42
 KNEE = 0.82
-# Image-quality-aware strategy knobs (chosen on the validation split only; see docs/QUALITY_AWARE.md)
+# Image-quality-aware strategy knobs, chosen on validation data only: scripts/validate.py writes the
+# evidence to results/validation/ (eval_P1_T76.md section 9)
 LOW_INFO_SIDE = 400     # shorter side below this = little real information (lower gain cap)
 BLOCKY = 1.3            # JPEG blockiness above this = visible 8x8 blocks (PNG 1.01-1.09, JPEG q60 2-4.6)
 PRE_DENOISE_AT = 10.0   # expected grain (/255) after brightening above which chroma is denoised first
 REINJECT = 0.6          # share of restoration-removed detail (above the noise floor) put back
-DETAIL_FINE = 0.5       # fine-texture sharpening amount (before noise / softness scaling)
-DETAIL_MID = 0.25       # local-contrast amount (before noise / softness scaling)
+DETAIL_FINE = 0.3       # fine-texture sharpening amount (before noise / softness scaling)
+DETAIL_MID = 0.15       # local-contrast amount (validation: results/validation/sharpening_round1.json)
 DEBLOCK_FINE = 0.0      # fine-sharpening share kept on deblocked JPEGs (validation: compressed proxy)
 SOFT, SHARP = 0.010, 0.030  # restored-image sharpness index: clean references span ~0.012-0.040
 PRESETS = {  # user intent -> brightness multiplier
@@ -281,6 +283,13 @@ def explain(d, p):
         f"(measured grain after brightening up to ~{p.denoise_sigma:.0f}/255).",
         f"Highlights rolled off softly above {p.knee * 100:.0f}% instead of clipping.",
     ]
+    if p.pre_denoise:
+        did.insert(0, "Cleaned colour noise" + (" and JPEG block edges" if p.deblock else "")
+                   + " in the dark photo before brightening, so they were not amplified.")
+    if p.detail_reinject + p.detail_fine + p.detail_mid > 0.02:
+        did.append(f"Recovered detail after noise removal (re-injected up to {p.detail_reinject * 100:.0f}% of the lost "
+                   f"detail, sharpening {p.detail_fine:.2f} fine / {p.detail_mid:.2f} mid), only where it is stronger "
+                   "than the measured noise, with a halo guard.")
     return seen, did
 
 

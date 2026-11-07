@@ -49,7 +49,7 @@ flowchart TD
     HG --> CL
     CC --> RN
     HG --> NM
-    RN --> DR["⑥ detail_stage → recover_detail<br/>re-inject above-noise detail, 2-scale guided USM,<br/>halo clamp; strengths from residual noise + sharpness"]
+    RN --> DR["⑥ detail_stage → recover_detail<br/>re-inject above-noise detail, 2-scale unsharp mask<br/>(Gaussian base, cored), halo clamp; strengths from residual noise + sharpness"]
     DR --> UI["adjust_exposure (user intent)"]
     UI --> TRF["⑦ run_full detail transfer<br/>photo's own fine band × gain, cored + structure-gated"]
     TRF --> OUT(["api.py JSON: three outputs as WebP at the input size, diagnostics labels,<br/>enhancement breakdown, explanations, no-reference checks,<br/>intermediate maps, timings, Auto-mode recommendation"])

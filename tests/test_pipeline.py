@@ -137,3 +137,31 @@ def test_strategy_and_labels_are_consistent():
     assert lab["illumination"]["label"].startswith("Low")
     st = A.strategy(d, p, P.FULL)
     assert "Extremely dark" in st["cases"] and any(o["stage"] == "Detail recovery" for o in st["operations"])
+
+
+def test_pre_denoise_does_not_hide_noise_from_the_restorer():
+    import cv2
+    r = np.random.default_rng(3)
+    clean = cv2.resize(r.random((60, 80, 3)).astype(np.float32), (640, 480), interpolation=cv2.INTER_CUBIC)
+    dark = np.clip(clean * 0.06 + r.normal(0, 0.01, clean.shape), 0, 1)
+    ok, buf = cv2.imencode(".jpg", C.to_u8(dark), [cv2.IMWRITE_JPEG_QUALITY, 70])
+    jpg = C.to_float(cv2.imdecode(buf, 1))
+    _, _, d, p, _, _ = P.prepare(jpg, dict(P.FULL))
+    assert p.pre_denoise
+    real = C.pre_denoise
+    try:
+        C.pre_denoise = lambda img, s, deblock=False: img      # same pipeline, nothing cleaned first
+        _, _, _, p_raw, _, _ = P.prepare(jpg, dict(P.FULL))
+    finally:
+        C.pre_denoise = real
+    assert p.denoise_sigma >= 0.95 * p_raw.denoise_sigma
+
+
+def test_unsharp_mask_sharpens_edges_not_only_texture():
+    import cv2
+    step = np.zeros((64, 64, 3), np.float32)
+    step[:, 32:] = 0.6
+    step += 0.2
+    soft = cv2.GaussianBlur(step, (0, 0), 1.5)
+    out = C.recover_detail(soft, None, 0.5, 0, 0.3, 0.15)
+    assert A.sharpness_index(out) > A.sharpness_index(soft) * 1.05      # an edge-aware base gave ~1.0

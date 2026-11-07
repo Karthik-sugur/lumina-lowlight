@@ -81,7 +81,7 @@ npx vercel@latest deploy --prod
 ## Tested (2026-11-07)
 
 `tests/test_api.py` (11 tests: three real outputs, resizing, PNG/greyscale, intent, bad inputs, recommendation, origin allow-list). In the browser, locally and on the production URL:
-- upload → restore (after the image-quality-aware update, production): 4.3 s on desktop for a 600×400 sample (0.96 s on the engine for all three pipelines), 2.4 s on a 375 px mobile profile, 9.2 s for a 2048×1365 photo returned at full size (4.19 s on the engine); earlier, before the update: 2.15 s / 1.86 s;
+- upload → restore (final version, production): 3.5 s on desktop for a 600×400 sample (1.12 s on the engine for all three pipelines), 1.8 s on a 375 px mobile profile, 6.4 s for a 2048×1365 photo returned at full size (4.14 s on the engine); earlier runs on the same day ranged up to 4.3 s / 2.4 s / 9.2 s (free shared CPU);
 - Analysis tab: image-quality diagnostics and enhancement breakdown render on desktop and mobile; status line states processing and output sizes; Benchmarks show the de-duplicated evaluation, the before/after card and Auto mode;
 - mode switching, fine-tune, Analysis, all five downloads (valid PNGs), Comparison Lab, all 7 Technology stages (every image loads), Benchmarks numbers equal to the evaluation;
 - errors: GIF, >15 MB, corrupt file, 12×12 and 16×16 images (rejected by the engine's own validation), engine unreachable → message + Retry;

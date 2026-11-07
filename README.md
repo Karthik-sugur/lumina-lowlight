@@ -30,16 +30,16 @@ All test images are unseen (never used for training, validation or tuning). LOL-
 | Average over 3 paired test sets (124 pairs, sets weighted equally) | PSNR ↑ | SSIM ↑ | LPIPS ↓ | NIQE ↓ | Residual noise σ ↓ | ΔE2000 ↓ |
 |---|---|---|---|---|---|---|
 | Zero-DCE++ (official weights) | 16.16 | 0.595 | 0.337 | 7.41 | 5.06 | 18.06 |
-| Classical only (ours) | 16.76 | 0.621 | 0.467 | 6.87 | 5.36 | 16.49 |
+| Classical only (ours) | 16.74 | 0.618 | 0.477 | 6.92 | 5.38 | 16.51 |
 | Deep learning only (ours) | 17.65 | 0.589 | 0.349 | 7.58 | 6.62 | 15.22 |
-| **Hybrid (ours)** | **18.23** | **0.771** | **0.248** | **4.24** | **1.42** | **13.34** |
+| **Hybrid (ours)** | **18.19** | **0.769** | **0.249** | **4.25** | **1.50** | **13.36** |
 
-- **LOL-v1 eval15 / clean LOL-v2 real:** hybrid 19.18 / 18.67 dB PSNR, SSIM 0.779 / 0.772, LPIPS 0.207 / 0.283; best of all methods on both sets except new-overexposure.
+- **LOL-v1 eval15 / clean LOL-v2 real:** hybrid 19.13 / 18.65 dB PSNR, SSIM 0.777 / 0.770, LPIPS 0.207 / 0.283; best of all methods on both sets except new-overexposure.
 - **Darkness sweep (30 unseen references):** best method in all six conditions (×0.5 … ×0.025 by 1.5–2.6 dB; under a strong spotlight only narrowly in PSNR, clearly in SSIM).
-- **ExDark real-world night photos (no ground truth):** lowest residual noise (1.85); the official Zero-DCE++ has the best NIQE (4.29 vs 4.54).
-- **Image-quality-aware update:** measures noise, sharpness, colourfulness, JPEG blocking and resolution and adapts to them; handles small compressed photos (flower JPEG: blocks 2.03 → 1.33, grain 2.83 → 1.40, colourfulness 0.63 → 0.55) and returns full-size results with real (not invented) detail. Neutral on the LOL-style test sets after one fix (its first version capped saturation before denoising and lost 0.27–0.76 dB; the fix was prompted by that test result and chosen on fresh validation data, disclosed in [`eval_P1_T76.md`](eval_P1_T76.md) §9.5–9.6). ExDark NIQE is worse with it (4.18 → 4.54).
-- **Honest weak spots:** not best on LOL-v2 synthetic (16.84 vs 18.04 dB for DL-only); the most new overexposure of our methods (1.08 % avg); Auto mode cannot beat "always hybrid" on validation, so it keeps the hybrid unless another output is clearly better. Details in [`eval_P1_T76.md`](eval_P1_T76.md) §6–9.
-- **Two tiny networks:** 10.6k + 144.6k parameters (~0.6 MB); 0.8–1.0 s per 600×400 image, 2.4–2.7 s at 1280×960, 2.7–3.0 s for a 2048-px photo returned full size, on a laptop CPU (range of our two final runs).
+- **ExDark real-world night photos (no ground truth):** lowest residual noise (1.89); the official Zero-DCE++ has the best NIQE (4.29 vs 4.62).
+- **Image-quality-aware update:** measures noise, sharpness, colourfulness, JPEG blocking and resolution and adapts to them; handles small compressed photos (flower JPEG: blocks 2.03 → 1.31, grain 2.83 → 1.29, colourfulness 0.63 → 0.54) and returns full-size results with real (not invented) detail. Neutral on the LOL-style test sets after one fix (its first version capped saturation before denoising and lost 0.27–0.76 dB; the fix was prompted by that test result and chosen on fresh validation data, disclosed in [`eval_P1_T76.md`](eval_P1_T76.md) §9.5–9.6). A final source audit made its sharpening actually act and stopped pre-denoising from hiding noise from the restorer (both chosen on validation with `scripts/validate.py`, §9.8). ExDark NIQE is worse with the update (4.18 → 4.62).
+- **Honest weak spots:** not best on LOL-v2 synthetic (16.80 vs 18.04 dB for DL-only); the most new overexposure of our methods (1.11 % avg); Auto mode cannot beat "always hybrid" on validation, so it keeps the hybrid unless another output is clearly better. Details in [`eval_P1_T76.md`](eval_P1_T76.md) §6–9.
+- **Two tiny networks:** 10.6k + 144.6k parameters (~0.6 MB); 0.8–1.0 s per 600×400 image, 2.2–2.7 s at 1280×960, 2.5–3.0 s for a 2048-px photo returned full size, on a laptop CPU (range of our final runs).
 - Full evaluation, model selection, ablation and failure analysis: [`eval_P1_T76.md`](eval_P1_T76.md) (raw tables: [`results/tables.md`](results/tables.md)).
 
 ## Architecture
@@ -115,12 +115,13 @@ Open http://localhost:8080. Deployment to Vercel: [`docs/FRONTEND.md`](docs/FRON
 
 ```bash
 pip install -r requirements-dev.txt
-python scripts/download_data.py          # LOL, LOL-v2 test splits, ExDark, Zero-DCE++ weights (~720 MB, to $DATA_DIR or ./data)
+python scripts/download_data.py          # LOL, LOL-v2 test splits, 100 fresh LOL-v2 synthetic train pairs (validation only), ExDark, Zero-DCE++ weights (~770 MB, to $DATA_DIR or ./data)
 python scripts/train_dce.py              # Zero-DCE++ fine-tune on LOL train split (435/50 seeded split -> results/split.json)
 python scripts/train_restore.py          # restoration U-Net v3 (noise-level map; LOL + synthetic dark pairs)
 python scripts/train_restore.py --no-map # ablation model
 python scripts/evaluate.py               # all methods x all test sets, ablation, robustness, latency (~20 min, 8 cores)
 python scripts/report.py                 # results/tables.md, results/figures/, results/failures/
+python scripts/validate.py NAME '{...}'  # validation-only design experiments -> results/validation/ (see its docstring)
 python -m pytest -q                      # tests
 ```
 Everything runs on CPU, and seeds are fixed. The training logs we got are in `results/train_log_*.json`.

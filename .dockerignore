@@ -5,3 +5,8 @@ __pycache__
 *.out
 tests
 .claude
+**/.env*
+web/.vercel
+web/dist
+web/node_modules
+.pytest_cache
