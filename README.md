@@ -70,26 +70,11 @@ Computer Vision Hackathon 2026 · Problem P1 · **Team T76**
 
 ## Try it
 
-| | |
-|:--|:--|
-| **No install** | Open [lumina-t76.vercel.app](https://lumina-t76.vercel.app) → upload or pick a sample → **Auto Enhance** |
-| **Local** | `pip install torch --index-url https://download.pytorch.org/whl/cpu` · `pip install -r requirements.txt` · `python app.py` → http://localhost:7860 |
-| **Docker** | `docker build -t lumina . && docker run -p 7860:7860 lumina` *(Dockerfile written; Python path is what we tested)* |
+- **No install** — open [lumina-t76.vercel.app](https://lumina-t76.vercel.app), upload or pick a sample, press **Auto Enhance**
+- **Local** — `pip install torch --index-url https://download.pytorch.org/whl/cpu` then `pip install -r requirements.txt` then `python app.py` → http://localhost:7860
+- **Docker** — `docker build -t lumina . && docker run -p 7860:7860 lumina` *(Dockerfile written; Python path is what we tested)*
 
 Weights (~0.7 MB) are already in `weights/` — nothing else to download for inference.
-
----
-
-## Deliverables
-
-| What judges need | Where |
-|:--|:--|
-| Live web app | [lumina-t76.vercel.app](https://lumina-t76.vercel.app) |
-| Engine + Gradio UI | [darshuuuu-lumina-lowlight.hf.space](https://darshuuuu-lumina-lowlight.hf.space) |
-| Full evaluation + failures | [`eval_P1_T76.md`](eval_P1_T76.md) |
-| Design / requirements | [`docs/DESIGN.md`](docs/DESIGN.md) |
-| Architecture | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
-| Source | [`app.py`](app.py) · [`api.py`](api.py) · [`lowlight/`](lowlight/) · [`web/`](web/) |
 
 <details>
 <summary><strong>Full inventory</strong> — code, scripts, results, weights</summary>
